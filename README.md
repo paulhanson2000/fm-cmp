@@ -1,4 +1,4 @@
-Goals
+Goals:
 + Reproduce fine mapping results from [DIAMANTE paper](https://doi.org/10.1038/s41588-022-01058-3) ([results to reproduce](https://kp4cd.org/index.php/node/869))
 + Try various fine-mapping methods to see how they perform on this multi-ancestry data
   - SuSiEx ([SuSiExpaper](https://www.medrxiv.org/content/medrxiv/early/2023/01/09/2023.01.07.23284293.full.pdf), [original SuSie paper](https://doi.org/10.1111/rssb.12388))
