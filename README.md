@@ -1,4 +1,4 @@
-Goals:
+# Goals:
 + Reproduce fine mapping results from [DIAMANTE paper](https://doi.org/10.1038/s41588-022-01058-3) ([results to reproduce](https://kp4cd.org/index.php/node/869))
 + Try various fine-mapping methods to see how they perform on this multi-ancestry data
   - SuSiEx ([SuSiExpaper](https://www.medrxiv.org/content/medrxiv/early/2023/01/09/2023.01.07.23284293.full.pdf), [original SuSie paper](https://doi.org/10.1111/rssb.12388))
@@ -8,3 +8,11 @@ Goals:
   - FINEMAP ([paper](https://doi.org/10.1093/bioinformatics/btw018))
   - CAVIARBF ([paper](https://doi.org/10.1534/genetics.116.188953))
 + Once (a) suitable method(s) for multi-ancestral data is/are determined, try using them on traits other than T2D (e.g. HbA1C, fasting insulin, MAGIC fasting glucose...)
+
+# Random reminders (WIP)
+## To do
+Almost got MR-MEGA working, just missing an `N` column
+## To document
+<s/t s/t symbolic link (only works for our specific setup on CCDB, explain how to set things up otherwise)>
+<Mention that I got [MR-MEGA](https://genomics.ut.ee/en/tools), unzipped it, and put it in `third_party/`, and then added `in mrmega.in` file (b/c I don't know how to specify a custom input path for it yet) and made a `my_run_script.sh` in there too.>
+
