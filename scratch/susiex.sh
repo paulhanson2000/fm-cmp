@@ -8,9 +8,9 @@ module load plink/1.9b_6.21-x86_64 # `module load plink/2.00a3.6` (plink 2.0) do
 sumstats_eas="${SCRATCH}/DIAMANTE-EAS.sumstat-for_susiex.txt"
 sumstats_eur="${SCRATCH}/DIAMANTE-EUR.sumstat-for_susiex.txt"
 sumstats_sas="${SCRATCH}/DIAMANTE-SAS.sumstat-for_susiex.txt"
-cat "../data/DIAMANTE2022/sumstat/DIAMANTE-EAS.sumstat.txt" | sed -e 's/ / /g' -e '1 s/Fixed-effects_beta/BETA/' | grep -Eiv "NA|NaN" > "${sumstats_eas}"
-cat "../data/DIAMANTE2022/sumstat/DIAMANTE-EUR.sumstat.txt" | sed -e 's/ / /g' -e '1 s/Fixed-effects_beta/BETA/' | grep -Eiv "NA|NaN" > "${sumstats_eur}"
-cat "../data/DIAMANTE2022/sumstat/DIAMANTE-SAS.sumstat.txt" | sed -e 's/ / /g' -e '1 s/Fixed-effects_beta/BETA/' | grep -Eiv "NA|NaN" > "${sumstats_sas}"
+cat "../data/DIAMANTE2022/sumstat/DIAMANTE-EAS.sumstat.txt" | sed -e '1 s/Fixed-effects_beta/BETA/' | grep -Eiv "NA|NaN" > "${sumstats_eas}"
+cat "../data/DIAMANTE2022/sumstat/DIAMANTE-EUR.sumstat.txt" | sed -e '1 s/Fixed-effects_beta/BETA/' | grep -Eiv "NA|NaN" > "${sumstats_eur}"
+cat "../data/DIAMANTE2022/sumstat/DIAMANTE-SAS.sumstat.txt" | sed -e '1 s/Fixed-effects_beta/BETA/' | grep -Eiv "NA|NaN" > "${sumstats_sas}"
 
 ld_eas="${SCRATCH}/susiex_ld_eas"
 ld_eur="${SCRATCH}/susiex_ld_eur"
@@ -30,8 +30,8 @@ python3 ../third_party/SuSiEx/SuSiEx.py \
   --plink=plink \
   --out_dir=./susiex_out/ \
   --out_name=test \
-  --chr=1 `#TODO` \
-  --bp=94813205,95812998 `#TODO` \
+  --chr=2 `#TODO` \
+  --bp=27230940,28230940 `#TODO` \
   --chr_col=1,1,1 `# chromosome(b37) col` \
   --snp_col=4,4,4 `# rsID col` \
   --bp_col=2,2,2  `# position(b37) col` \

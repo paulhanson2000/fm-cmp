@@ -1,3 +1,6 @@
 [submodule "third_party/SuSiEx"]
 	path = third_party/SuSiEx
 	url = https://github.com/getian107/SuSiEx.git
+[submodule "third_party/PAINTOR_V3.0"]
+	path = third_party/PAINTOR_V3.0
+	url = https://github.com/gkichaev/PAINTOR_V3.0
