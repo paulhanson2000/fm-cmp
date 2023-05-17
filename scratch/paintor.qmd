@@ -1,0 +1,69 @@
+---
+title: title
+author: author
+institute: place
+format: html
+execute:
+  cache: true
+---
+
+# Lib
+```{r}
+library(data.table)
+library(rmarkdown)
+library(SNPRelate)
+```
+
+# Data
+Ancestry-level (multi-GWAS) summary stats
+```{r}
+#| cache: true
+eas <- fread("../data/DIAMANTE2022/sumstat/DIAMANTE-EAS.sumstat.txt", header=T)
+eur <- fread("../data/DIAMANTE2022/sumstat/DIAMANTE-EUR.sumstat.txt", header=T)
+sas <- fread("../data/DIAMANTE2022/sumstat/DIAMANTE-SAS.sumstat.txt", header=T)
+```
+
+Start with GCKR locus, index SNV rs1260326 (from supplementary table 7)\
+```{r}
+index_snv <- "rs1260326"
+index_snv_pos <- eas[rsID == index_snv, `position(b37)`]
+# TODO: In this case, this SNV's position is the same in all ancestries
+# But write out generalizable form
+
+eas_gckr_snvs <- eas[`position(b37)` < index_snv_pos+100000 &
+                     `position(b37)` > index_snv_pos-100000  ]
+eur_gckr_snvs <- eur[`position(b37)` < index_snv_pos+100000 &
+                     `position(b37)` > index_snv_pos-100000  ]
+sas_gckr_snvs <- sas[`position(b37)` < index_snv_pos+100000 &
+                     `position(b37)` > index_snv_pos-100000  ]
+```
+
+Subset to SNPs shared by all ancestries, and sort
+```{r}
+common_snvs <- Reduce(intersect, list(eas_gckr_snvs$rsID,eur_gckr_snvs$rsID,sas_gckr_snvs$rsID))
+eas_gckr_snvs <- eas_gckr_snvs[rsID %in% common_snvs]
+eur_gckr_snvs <- eur_gckr_snvs[rsID %in% common_snvs]
+sas_gckr_snvs <- sas_gckr_snvs[rsID %in% common_snvs]
+
+eas_gckr_snvs <- eas_gckr_snvs[order(rsID)]
+eur_gckr_snvs <- eur_gckr_snvs[order(rsID)]
+sas_gckr_snvs <- sas_gckr_snvs[order(rsID)]
+```
+
+```{r}
+eas_genofile <- snpgdsOpen("../data/reference_panels/1000_genomes/eas/g1000_eas.gds")
+eur_genofile <- snpgdsOpen("../data/reference_panels/1000_genomes/eur/g1000_eur.gds")
+sas_genofile <- snpgdsOpen("../data/reference_panels/1000_genomes/sas/g1000_sas.gds")
+
+# TODO: which correlation method is preferred?
+# TODO: ERROR: some snp.id do not exist!
+snpgdsLDMat(eas_genofile, snp.id=common_snvs, num.thread=NA)
+snpgdsLDMat(eur_genofile, snp.id=common_snvs, num.thread=NA)
+snpgdsLDMat(sas_genofile, snp.id=common_snvs, num.thread=NA)
+```
+
+
+
+
+
+
