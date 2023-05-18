@@ -1,0 +1,117 @@
+---
+title: title
+author: author
+institute: place
+format: html
+execute:
+  cache: true
+---
+
+# Lib
+```{r}
+library(data.table)
+#library(rmarkdown)
+library(SeqArray)
+library(SNPRelate)
+```
+
+# Data
+Ancestry-level (multi-GWAS) summary stats
+```{r}
+#| cache: true
+eas <- fread("../data/DIAMANTE2022/sumstat/DIAMANTE-EAS.sumstat.txt", header=T, select=c("rsID", "position(b37)", "effect_allele_frequency"))
+eur <- fread("../data/DIAMANTE2022/sumstat/DIAMANTE-EUR.sumstat.txt", header=T, select=c("rsID", "position(b37)", "effect_allele_frequency"))
+sas <- fread("../data/DIAMANTE2022/sumstat/DIAMANTE-SAS.sumstat.txt", header=T, select=c("rsID", "position(b37)", "effect_allele_frequency"))
+```
+
+Start with GCKR locus, index SNV rs1260326 (from supplementary table 7)\
+```{r}
+index_snv <- "rs1260326"
+index_snv_pos <- eas[rsID == index_snv, `position(b37)`]
+# TODO: In this case, this SNV's position is the same in all ancestries
+# But write out generalizable form just in case
+
+eas_gckr_snvs <- eas[`position(b37)` < index_snv_pos+100000 &
+                     `position(b37)` > index_snv_pos-100000  ]
+eur_gckr_snvs <- eur[`position(b37)` < index_snv_pos+100000 &
+                     `position(b37)` > index_snv_pos-100000  ]
+sas_gckr_snvs <- sas[`position(b37)` < index_snv_pos+100000 &
+                     `position(b37)` > index_snv_pos-100000  ]
+rm(eas,eur,sas); gc()
+```
+
+TODO: not sure if should do this but just want things to run faster for now
+Subset to SNVS with MAF < 0.05
+```{r}
+eas_gckr_snvs <- eas_gckr_snvs[effect_allele_frequency > 0.05 & effect_allele_frequency < 0.95]
+eur_gckr_snvs <- eur_gckr_snvs[effect_allele_frequency > 0.05 & effect_allele_frequency < 0.95]
+sas_gckr_snvs <- sas_gckr_snvs[effect_allele_frequency > 0.05 & effect_allele_frequency < 0.95]
+```
+
+Subset to SNPs shared by all ancestries, and sort
+```{r}
+# Very fast but could replace this with GDS file stuff too
+# TODO: fast yes, but loading in eas/eur/sas ~beforehand~ is not.
+common_snvs <- Reduce(intersect, list(eas_gckr_snvs$rsID,eur_gckr_snvs$rsID,sas_gckr_snvs$rsID))
+eas_gckr_snvs <- eas_gckr_snvs[rsID %in% common_snvs]
+eur_gckr_snvs <- eur_gckr_snvs[rsID %in% common_snvs]
+sas_gckr_snvs <- sas_gckr_snvs[rsID %in% common_snvs]
+
+eas_gckr_snvs <- eas_gckr_snvs[order(rsID)]
+eur_gckr_snvs <- eur_gckr_snvs[order(rsID)]
+sas_gckr_snvs <- sas_gckr_snvs[order(rsID)]
+```
+
+```{r}
+gds_1kg <- seqOpen("../data/ref/1kg/gds_format/1KG_ALL.autosomes.phase3_shapeit2_mvncall_integrated_v5a.20130502.genotypes.gds")
+#seqSummary(gds_1kg)
+sample_info <- fread("../data/ref/1kg/gds_format/integrated_call_samples_v3.20130502.ALL.panel", header=F)
+
+samples_eas <- sample_info[V3 == "EAS", V1]
+samples_eur <- sample_info[V3 == "EUR", V1]
+samples_sas <- sample_info[V3 == "SAS", V1]
+rm(sample_info)
+
+#head(seqGetData(gds_1kg, "annotation/id"))
+snv_inds <- seqSetFilterAnnotID(gds_1kg, common_snvs, ret.idx=T)
+# seqFilterPush(gds_1kg) # No need to push, variant filter not overwritten by the following filters on samples
+
+seqSetFilter(gds_1kg, sample.id=samples_eas)
+eas_ids <- seqGetData(gds_1kg, "sample.id")
+seqSetFilter(gds_1kg, sample.id=samples_eur)
+eur_ids <- seqGetData(gds_1kg, "sample.id")
+seqSetFilter(gds_1kg, sample.id=samples_sas)
+sas_ids <- seqGetData(gds_1kg, "sample.id")
+```
+
+```{r}
+# tmp_variant_ids <- seqGetData(gds_1kg, "variant.id")
+# identical(order(tmp_variant_inds, snv_inds)) # TRUE
+# snv_inds from seqFilter... w/ ret.idx=T just does match(in, "annotation/id") under the hood
+  # So the order of snv_inds is in whatever order common_snvs was.
+  # match(x,y) returns a vec "ret" of length 1..i..L where
+  # you need to do y[ret[i]] to get x[i]
+# Feels counter-intuitive... why is snv_inds just 1:13516 then? Can't be right unless
+# the 1kg and DIAMANTE snvs were ordered the exact same way
+
+
+# TODO: which correlation method is preferred?
+ld_eas <- snpgdsLDMat(gds_1kg, slide=-1, snp.id=snv_inds, sample.id=eas_ids, num.thread=6)
+ld_eas$LD[is.na(ld_eas$LD)] <- 0 # TODO: not sure if should do this, but o/w file is messed up. TODO: investigate what is causing the NaNs and possibly find solution based on that (snvs with NA info or s/t?) # It was not (completely, at least) due to small MAFs # Check out what the "composite" correlation is
+fwrite(ld_eas$LD, "paintor_in/GCKR.ld_eas", sep=' ', col.names=F)
+rm(ld_eas)
+
+ld_eur <- snpgdsLDMat(gds_1kg, slide=-1, snp.id=snv_inds, sample.id=eur_ids, num.thread=6)
+ld_eur$LD[is.na(ld_eur$LD)] <- 0
+fwrite(ld_eur$LD, "paintor_in/GCKR.ld_eur", sep=' ', col.names=F)
+rm(ld_eur)
+
+ld_sas <- snpgdsLDMat(gds_1kg, slide=-1, snp.id=snv_inds, sample.id=sas_ids, num.thread=6)
+ld_sas$LD[is.na(ld_sas$LD)] <- 0
+fwrite(ld_sas$LD, "paintor_in/GCKR.ld_sas", sep=' ', col.names=F)
+```
+
+
+
+
+

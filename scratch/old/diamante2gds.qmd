@@ -1,0 +1,44 @@
+---
+title: title
+author: author
+institute: place
+format: html
+execute:
+  cache: true
+---
+
+# Lib
+```{r}
+library(data.table)
+library(SeqArray)
+library(SNPRelate)
+```
+
+# Data
+Ancestry-level (multi-GWAS) summary stats
+```{r}
+#| cache: true
+eas <- fread("../data/DIAMANTE2022/sumstat/DIAMANTE-EAS.sumstat.txt", header=T)
+eur <- fread("../data/DIAMANTE2022/sumstat/DIAMANTE-EUR.sumstat.txt", header=T)
+sas <- fread("../data/DIAMANTE2022/sumstat/DIAMANTE-SAS.sumstat.txt", header=T)
+```
+
+# DIAMANTE to VCF to GDS
+See [here](https://gatk.broadinstitute.org/hc/en-us/articles/360035531692-VCF-Variant-Call-Format)
+Maybe better to call unix tools from R to just load the needed parts?
+  Yes, see `r ?fread` and see the `r cmd` arg.
+```{r}
+eas_vcf <- data.table(CHOM  =eas$`chromosome(b37)`,
+                      POS   =eas$`position(b37)`,
+                      ID    =eas$rsID,
+                      REF   =eas$effect_allele, # TODO: incorrect? not sure.
+                      ALT   =eas$other_allele,
+                      QUAL  =NA,
+                      FILTER="PASS",
+                      INFO  =paste(sep=';',
+                               paste0("AF=",eas$effect_allele_frequency),
+                               paste0("FE_B=",eas$`Fixed-effects_beta`),
+                               paste0("FE_SE=",eas$`Fixed-effects_SE`),
+                               paste0("FE_P=",eas$`Fixed-effects_p-value`)
+                               )
+```

@@ -1,0 +1,19 @@
+Running PAINTOR with full enumeration
+Maximum number of causals per locus: 1
+Proportion of LD variance kept when performing truncated SVD for estimating N*h2g: 0.95
+Model annotations: dummy_annot 
+**********
+Reading in files for: GCKR
+**********
+Warning! The estimated N*h2_g,local for locus GCKR is: 3090.3
+This may potentially indicate mismatch/error in the LD-matrix
+Enrichment estimates at iteration 1 is :
+8.65991
+      0
+Average log bayes factor: 13.8251
+
+Enrichment estimates at iteration 2 is :
+8.65991
+      0
+Average log bayes factor: 13.8251
+
