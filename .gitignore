@@ -1,5 +1,8 @@
-scratch/GCKR.ld_eur
+scratch/eas_LD_SNP_format.gds
+scratch/eur_LD_SNP_format.gds
+scratch/sas_LD_SNP_format.gds
 scratch/GCKR.ld_sas
+scratch/old/*
 scratch/paintor_in/*
 scratch/paintor_out/*
 scratch/PAINTOR

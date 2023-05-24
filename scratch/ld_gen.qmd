@@ -19,33 +19,38 @@ library(SNPRelate)
 Ancestry-level (multi-GWAS) summary stats
 ```{r}
 #| cache: true
-eas <- fread("../data/DIAMANTE2022/sumstat/DIAMANTE-EAS.sumstat.txt", header=T, select=c("rsID", "position(b37)", "effect_allele_frequency"))
-eur <- fread("../data/DIAMANTE2022/sumstat/DIAMANTE-EUR.sumstat.txt", header=T, select=c("rsID", "position(b37)", "effect_allele_frequency"))
-sas <- fread("../data/DIAMANTE2022/sumstat/DIAMANTE-SAS.sumstat.txt", header=T, select=c("rsID", "position(b37)", "effect_allele_frequency"))
+eas <- fread("../data/DIAMANTE2022/sumstat/DIAMANTE-EAS.sumstat.txt", header=T, select=c("rsID", "chromosome(b37)", "position(b37)", "effect_allele_frequency"))
+eur <- fread("../data/DIAMANTE2022/sumstat/DIAMANTE-EUR.sumstat.txt", header=T, select=c("rsID", "chromosome(b37)", "position(b37)", "effect_allele_frequency"))
+sas <- fread("../data/DIAMANTE2022/sumstat/DIAMANTE-SAS.sumstat.txt", header=T, select=c("rsID", "chromosome(b37)", "position(b37)", "effect_allele_frequency"))
 ```
 
 Start with GCKR locus, index SNV rs1260326 (from supplementary table 7)\
 ```{r}
 index_snv <- "rs1260326"
 index_snv_pos <- eas[rsID == index_snv, `position(b37)`]
-# TODO: In this case, this SNV's position is the same in all ancestries
+index_snv_chr <- eas[rsID == index_snv, `chromosome(b37)`]
+# TODO: In this case, this SNV's chr & pos is the same in all ancestries
 # But write out generalizable form just in case
 
-eas_gckr_snvs <- eas[`position(b37)` < index_snv_pos+100000 &
+eas_gckr_snvs <- eas[`chromosome(b37)` == index_snv_chr &
+                     `position(b37)` < index_snv_pos+100000 &
                      `position(b37)` > index_snv_pos-100000  ]
-eur_gckr_snvs <- eur[`position(b37)` < index_snv_pos+100000 &
+eur_gckr_snvs <- eur[`chromosome(b37)` == index_snv_chr &
+                     `position(b37)` < index_snv_pos+100000 &
                      `position(b37)` > index_snv_pos-100000  ]
-sas_gckr_snvs <- sas[`position(b37)` < index_snv_pos+100000 &
+sas_gckr_snvs <- sas[`chromosome(b37)` == index_snv_chr &
+                     `position(b37)` < index_snv_pos+100000 &
                      `position(b37)` > index_snv_pos-100000  ]
 rm(eas,eur,sas); gc()
 ```
 
 TODO: not sure if should do this but just want things to run faster for now
-Subset to SNVS with MAF < 0.05
+Subset to SNVS with MAF > 0. \
+MAF should be > 0 in the 1k Genomes dataset too, will get to that shortly.
 ```{r}
-eas_gckr_snvs <- eas_gckr_snvs[effect_allele_frequency > 0.05 & effect_allele_frequency < 0.95]
-eur_gckr_snvs <- eur_gckr_snvs[effect_allele_frequency > 0.05 & effect_allele_frequency < 0.95]
-sas_gckr_snvs <- sas_gckr_snvs[effect_allele_frequency > 0.05 & effect_allele_frequency < 0.95]
+eas_gckr_snvs <- eas_gckr_snvs[effect_allele_frequency > 0 & effect_allele_frequency < 1]
+eur_gckr_snvs <- eur_gckr_snvs[effect_allele_frequency > 0 & effect_allele_frequency < 1]
+sas_gckr_snvs <- sas_gckr_snvs[effect_allele_frequency > 0 & effect_allele_frequency < 1]
 ```
 
 Subset to SNPs shared by all ancestries, and sort
@@ -60,8 +65,10 @@ sas_gckr_snvs <- sas_gckr_snvs[rsID %in% common_snvs]
 eas_gckr_snvs <- eas_gckr_snvs[order(rsID)]
 eur_gckr_snvs <- eur_gckr_snvs[order(rsID)]
 sas_gckr_snvs <- sas_gckr_snvs[order(rsID)]
+#identical(eas_gckr_snvs$rsID, eur_gckr_snvs$rsID)
 ```
 
+Load 1k Genomes reference, and subset to the DIAMANTE SNVs we're interested in.
 ```{r}
 gds_1kg <- seqOpen("../data/ref/1kg/gds_format/1KG_ALL.autosomes.phase3_shapeit2_mvncall_integrated_v5a.20130502.genotypes.gds")
 #seqSummary(gds_1kg)
@@ -72,16 +79,28 @@ samples_eur <- sample_info[V3 == "EUR", V1]
 samples_sas <- sample_info[V3 == "SAS", V1]
 rm(sample_info)
 
+# Filter 1kG SNVs to only the snvs shared by all ancs in DIAMANTE dataset
 #head(seqGetData(gds_1kg, "annotation/id"))
 snv_inds <- seqSetFilterAnnotID(gds_1kg, common_snvs, ret.idx=T)
 # seqFilterPush(gds_1kg) # No need to push, variant filter not overwritten by the following filters on samples
 
+# Filter 1kG SNVs further to only those w/ acceptable AF in ~every~ individual anc.
+EAS_AF <- seqGetData(gds_1kg, "annotation/info/EAS_AF")$data
+EUR_AF <- seqGetData(gds_1kg, "annotation/info/EUR_AF")$data
+SAS_AF <- seqGetData(gds_1kg, "annotation/info/SAS_AF")$data
+seqSetFilter(gds_1kg, variant.sel=(EAS_AF > 0 & EAS_AF < 1 & 
+                                   EUR_AF > 0 & EUR_AF < 1 &
+                                   SAS_AF > 0 & SAS_AF < 1  ), action="intersect")
+
 seqSetFilter(gds_1kg, sample.id=samples_eas)
 eas_ids <- seqGetData(gds_1kg, "sample.id")
+seqGDS2SNP(gds_1kg, "eas_LD_SNP_format.gds", compress.geno="", compress.annotation="") # Takes into account the current filters
 seqSetFilter(gds_1kg, sample.id=samples_eur)
 eur_ids <- seqGetData(gds_1kg, "sample.id")
+seqGDS2SNP(gds_1kg, "eur_LD_SNP_format.gds", compress.geno="", compress.annotation="")
 seqSetFilter(gds_1kg, sample.id=samples_sas)
 sas_ids <- seqGetData(gds_1kg, "sample.id")
+seqGDS2SNP(gds_1kg, "sas_LD_SNP_format.gds", compress.geno="", compress.annotation="")
 ```
 
 ```{r}
@@ -96,19 +115,26 @@ sas_ids <- seqGetData(gds_1kg, "sample.id")
 
 
 # TODO: which correlation method is preferred?
-ld_eas <- snpgdsLDMat(gds_1kg, slide=-1, snp.id=snv_inds, sample.id=eas_ids, num.thread=6)
-ld_eas$LD[is.na(ld_eas$LD)] <- 0 # TODO: not sure if should do this, but o/w file is messed up. TODO: investigate what is causing the NaNs and possibly find solution based on that (snvs with NA info or s/t?) # It was not (completely, at least) due to small MAFs # Check out what the "composite" correlation is
-fwrite(ld_eas$LD, "paintor_in/GCKR.ld_eas", sep=' ', col.names=F)
-rm(ld_eas)
+#ld_eas <- snpgdsLDMat(gds_1kg, slide=-1, snp.id=snv_inds, sample.id=eas_ids, num.thread=6, method="r")
+#ld_eas$LD[is.na(ld_eas$LD)] <- 0 # TODO: not sure if should do this, but o/w file is messed up. TODO: investigate what is causing the NaNs and possibly find solution based on that (snvs with NA info or s/t?) # It was not (completely, at least) due to small MAFs # Check out what the "composite" correlation is
+#fwrite(ld_eas$LD, "paintor_in/GCKR.ld_r_eas", sep=' ', col.names=F)
+#rm(ld_eas)
+#
+#ld_eur <- snpgdsLDMat(gds_1kg, slide=-1, snp.id=snv_inds, sample.id=eur_ids, num.thread=6, method="r")
+#ld_eur$LD[is.na(ld_eur$LD)] <- 0
+#fwrite(ld_eur$LD, "paintor_in/GCKR.ld_r_eur", sep=' ', col.names=F)
+#rm(ld_eur)
+#
+#ld_sas <- snpgdsLDMat(gds_1kg, slide=-1, snp.id=snv_inds, sample.id=sas_ids, num.thread=6, method="r")
+#ld_sas$LD[is.na(ld_sas$LD)] <- 0
+#fwrite(ld_sas$LD, "paintor_in/GCKR.ld_r_sas", sep=' ', col.names=F)
 
-ld_eur <- snpgdsLDMat(gds_1kg, slide=-1, snp.id=snv_inds, sample.id=eur_ids, num.thread=6)
-ld_eur$LD[is.na(ld_eur$LD)] <- 0
-fwrite(ld_eur$LD, "paintor_in/GCKR.ld_eur", sep=' ', col.names=F)
-rm(ld_eur)
-
-ld_sas <- snpgdsLDMat(gds_1kg, slide=-1, snp.id=snv_inds, sample.id=sas_ids, num.thread=6)
-ld_sas$LD[is.na(ld_sas$LD)] <- 0
-fwrite(ld_sas$LD, "paintor_in/GCKR.ld_sas", sep=' ', col.names=F)
+eas_ld_snp_file <- snpgdsOpen("eas_LD_SNP_format.gds", readonly=F)
+ld_eas <- snpgdsLDMat(eas_ld_snp_file, slide=0, method="corr", num.thread=4)$LD
+eur_ld_snp_file <- snpgdsOpen("eur_LD_SNP_format.gds", readonly=F)
+ld_eur <- snpgdsLDMat(eur_ld_snp_file, slide=0, method="corr", num.thread=4)$LD
+sas_ld_snp_file <- snpgdsOpen("sas_LD_SNP_format.gds", readonly=F)
+ld_sas <- snpgdsLDMat(sas_ld_snp_file, slide=0, method="corr", num.thread=4)$LD
 ```
 
 
