@@ -19,34 +19,38 @@ library(SNPRelate)
 Ancestry-level (multi-GWAS) summary stats
 ```{r}
 #| cache: true
-eas <- fread("../data/DIAMANTE2022/sumstat/DIAMANTE-EAS.sumstat.txt", header=T, select=c("rsID", "position(b37)", "Fixed-effects_beta", "Fixed-effects_SE", "effect_allele_frequency"))
-eur <- fread("../data/DIAMANTE2022/sumstat/DIAMANTE-EUR.sumstat.txt", header=T, select=c("rsID", "position(b37)", "Fixed-effects_beta", "Fixed-effects_SE", "effect_allele_frequency"))
-sas <- fread("../data/DIAMANTE2022/sumstat/DIAMANTE-SAS.sumstat.txt", header=T, select=c("rsID", "position(b37)", "Fixed-effects_beta", "Fixed-effects_SE", "effect_allele_frequency"))
+eas <- fread("../data/DIAMANTE2022/sumstat/DIAMANTE-EAS.sumstat.txt", header=T, select=c("rsID", "chromosome(b37)", "position(b37)", "effect_allele_frequency", "Fixed-effects_beta", "Fixed-effects_SE", "effect_allele", "other_allele"))
+eur <- fread("../data/DIAMANTE2022/sumstat/DIAMANTE-EUR.sumstat.txt", header=T, select=c("rsID", "chromosome(b37)", "position(b37)", "effect_allele_frequency", "Fixed-effects_beta", "Fixed-effects_SE", "effect_allele", "other_allele"))
+sas <- fread("../data/DIAMANTE2022/sumstat/DIAMANTE-SAS.sumstat.txt", header=T, select=c("rsID", "chromosome(b37)", "position(b37)", "effect_allele_frequency", "Fixed-effects_beta", "Fixed-effects_SE", "effect_allele", "other_allele"))
 ```
 
 Start with GCKR locus, index SNV rs1260326 (from supplementary table 7)\
 ```{r}
 index_snv <- "rs1260326"
 index_snv_pos <- eas[rsID == index_snv, `position(b37)`]
-# TODO: In this case, this SNV's position is the same in all ancestries
+index_snv_chr <- eas[rsID == index_snv, `chromosome(b37)`]
+# TODO: In this case, this SNV's chr & pos is the same in all ancestries
 # But write out generalizable form just in case
 
-eas_gckr_snvs <- eas[`position(b37)` < index_snv_pos+100000 &
+eas_gckr_snvs <- eas[`chromosome(b37)` == index_snv_chr &
+                     `position(b37)` < index_snv_pos+100000 &
                      `position(b37)` > index_snv_pos-100000  ]
-eur_gckr_snvs <- eur[`position(b37)` < index_snv_pos+100000 &
+eur_gckr_snvs <- eur[`chromosome(b37)` == index_snv_chr &
+                     `position(b37)` < index_snv_pos+100000 &
                      `position(b37)` > index_snv_pos-100000  ]
-sas_gckr_snvs <- sas[`position(b37)` < index_snv_pos+100000 &
+sas_gckr_snvs <- sas[`chromosome(b37)` == index_snv_chr &
+                     `position(b37)` < index_snv_pos+100000 &
                      `position(b37)` > index_snv_pos-100000  ]
-rm(eas,eur,sas)
-# TODO: replace this w/ GDS seqSet 
+rm(eas,eur,sas); gc()
 ```
 
 TODO: not sure if should do this but just want things to run faster for now
-Subset to SNVS with MAF < 0.05
+Subset to SNVS with MAF > 0. \
+MAF should be > 0 in the 1k Genomes dataset too, will get to that shortly.
 ```{r}
-eas_gckr_snvs <- eas_gckr_snvs[effect_allele_frequency > 0.05 & effect_allele_frequency < 0.95]
-eur_gckr_snvs <- eur_gckr_snvs[effect_allele_frequency > 0.05 & effect_allele_frequency < 0.95]
-sas_gckr_snvs <- sas_gckr_snvs[effect_allele_frequency > 0.05 & effect_allele_frequency < 0.95]
+eas_gckr_snvs <- eas_gckr_snvs[effect_allele_frequency > 0 & effect_allele_frequency < 1]
+eur_gckr_snvs <- eur_gckr_snvs[effect_allele_frequency > 0 & effect_allele_frequency < 1]
+sas_gckr_snvs <- sas_gckr_snvs[effect_allele_frequency > 0 & effect_allele_frequency < 1]
 ```
 
 Subset to SNPs shared by all ancestries, and sort
@@ -61,15 +65,15 @@ sas_gckr_snvs <- sas_gckr_snvs[rsID %in% common_snvs]
 eas_gckr_snvs <- eas_gckr_snvs[order(rsID)]
 eur_gckr_snvs <- eur_gckr_snvs[order(rsID)]
 sas_gckr_snvs <- sas_gckr_snvs[order(rsID)]
+#identical(eas_gckr_snvs$rsID, eur_gckr_snvs$rsID)
 ```
 
+Locus input file for PAINTOR
 ```{r}
 eas_gckr_snvs$z = eas_gckr_snvs$`Fixed-effects_beta`/eas_gckr_snvs$`Fixed-effects_SE`
 eur_gckr_snvs$z = eur_gckr_snvs$`Fixed-effects_beta`/eur_gckr_snvs$`Fixed-effects_SE`
 sas_gckr_snvs$z = sas_gckr_snvs$`Fixed-effects_beta`/sas_gckr_snvs$`Fixed-effects_SE`
-```
 
-```{r}
 identical(eas_gckr_snvs$rsID, eur_gckr_snvs$rsID)
 identical(eas_gckr_snvs$rsID, sas_gckr_snvs$rsID)
 
@@ -80,8 +84,162 @@ out <- data.table(rsID=eas_gckr_snvs$rsID,
 fwrite(out, "paintor_in/GCKR", sep=' ')
 ```
 
-# Make dummy annotation file for now
+Load 1k Genomes reference, and subset to the DIAMANTE SNVs we're interested in.
 ```{r}
+gds_1kg <- seqOpen("../data/ref/1kg/gds_format/1KG_ALL.autosomes.phase3_shapeit2_mvncall_integrated_v5a.20130502.genotypes.gds")
+#seqSummary(gds_1kg)
+sample_info <- fread("../data/ref/1kg/gds_format/integrated_call_samples_v3.20130502.ALL.panel", header=F)
+
+samples_eas <- sample_info[V3 == "EAS", V1]
+samples_eur <- sample_info[V3 == "EUR", V1]
+samples_sas <- sample_info[V3 == "SAS", V1]
+rm(sample_info)
+
+# Filter 1kG SNVs to only the snvs shared by all ancs in DIAMANTE dataset
+#head(seqGetData(gds_1kg, "annotation/id"))
+snv_inds <- seqSetFilterAnnotID(gds_1kg, common_snvs, ret.idx=T)
+# seqFilterPush(gds_1kg) # No need to push, variant filter not overwritten by the following filters on samples
+
+# Filter 1kG SNVs further to only those w/ acceptable AF in ~every~ individual anc.
+EAS_AF <- seqGetData(gds_1kg, "annotation/info/EAS_AF")$data
+EUR_AF <- seqGetData(gds_1kg, "annotation/info/EUR_AF")$data
+SAS_AF <- seqGetData(gds_1kg, "annotation/info/SAS_AF")$data
+seqSetFilter(gds_1kg, variant.sel=(EAS_AF > 0 & EAS_AF < 1 & 
+                                   EUR_AF > 0 & EUR_AF < 1 &
+                                   SAS_AF > 0 & SAS_AF < 1  ), action="intersect")
+# Can this filter be loosened? Like, if ~at least~ one anc has MAF between 0-1 it's OK?
+
+# Filter <...>_gckr_snvs to the ones that have acceptable AF in 1kG too.
+# TODO: ugly repeated code. Load gds_1kg earlier.
+common_snvs <- seqGetData(gds_1kg, "annotation/id")
+eas_gckr_snvs <- eas_gckr_snvs[rsID %in% common_snvs]
+eur_gckr_snvs <- eur_gckr_snvs[rsID %in% common_snvs]
+sas_gckr_snvs <- sas_gckr_snvs[rsID %in% common_snvs]
+
+# Writing is done later after matching snp order. TODO: ugly
+
+# Dummy annotation file for PAINTOR
 dummy_annot <- data.table(dummy_annot=rep(0,length(common_snvs)))
 fwrite(dummy_annot, "paintor_in/GCKR.annotations", sep=' ')
+# TODO: EXTREMELY UGLY and repeated code, please clean up soon
 ```
+
+```{r}
+seqSetFilter(gds_1kg, sample.id=samples_eas)
+eas_ids <- seqGetData(gds_1kg, "sample.id")
+seqGDS2SNP(gds_1kg, "eas_LD_SNP_format.gds", compress.geno="", compress.annotation="") # Takes into account the current filters
+seqSetFilter(gds_1kg, sample.id=samples_eur)
+eur_ids <- seqGetData(gds_1kg, "sample.id")
+seqGDS2SNP(gds_1kg, "eur_LD_SNP_format.gds", compress.geno="", compress.annotation="")
+seqSetFilter(gds_1kg, sample.id=samples_sas)
+sas_ids <- seqGetData(gds_1kg, "sample.id")
+seqGDS2SNP(gds_1kg, "sas_LD_SNP_format.gds", compress.geno="", compress.annotation="")
+```
+
+# Match order of variants in 1kG ref & diamante
+```{r}
+identical(seqGetData(gds_1kg, "annotation/id"), eas_gckr_snvs$rsID)
+length(eas_gckr_snvs$rsID)
+length(seqGetData(gds_1kg, "annotation/id"))
+length(union(seqGetData(gds_1kg, "annotation/id"), eas_gckr_snvs$rsID)) # they have the same, but not same order
+
+# https://stackoverflow.com/a/37881577
+tmp <- match(seqGetData(gds_1kg,"annotation/id"), eas_gckr_snvs$rsID)
+# eas/eur/sas_gckr_snvs all in same order, so we can order them all the same way with tmp
+eas_gckr_snvs <- eas_gckr_snvs[tmp]
+eur_gckr_snvs <- eur_gckr_snvs[tmp]
+sas_gckr_snvs <- sas_gckr_snvs[tmp]
+identical(seqGetData(gds_1kg,"annotation/id"), eas_gckr_snvs$rsID)
+
+out <- data.table(rsID=eas_gckr_snvs$rsID,
+                  z_eas=eas_gckr_snvs$z,
+                  z_eur=eur_gckr_snvs$z,
+                  z_sas=sas_gckr_snvs$z)
+fwrite(out, "paintor_in/GCKR", sep=' ')
+```
+
+# Make sure the reference allele for each variant matches too
+```{r}
+identical(seqGetData(gds_1kg,"annotation/id"), eas_gckr_snvs$rsID) # :)
+identical(seqGetData(gds_1kg,"$ref"), eas_gckr_snvs$effect_allele) # :(
+#table(eas_gckr_snvs$effect_allele); table(seqGetData(gds_1kg,"$ref"))
+str(eas_gckr_snvs$effect_allele)
+#str(seqGetData(gds_1kg,"$ref"))
+
+# Must use an SNPGDS file, not SeqGDS, for snpgdsAlleleSwitch
+eas_ld_snp_file <- snpgdsOpen("eas_LD_SNP_format.gds", readonly=F)
+snpgdsAlleleSwitch(eas_ld_snp_file, toupper(eas_gckr_snvs$effect_allele))
+
+ref_refs <- sapply(read.gdsn(index.gdsn(eas_ld_snp_file, "snp.allele")),
+       function(x) strsplit(x, split='/')[[1]][1],
+       USE.NAMES=F)
+identical(ref_refs, toupper(eas_gckr_snvs$effect_allele)) # :( -> :)
+rm(ref_refs)
+
+# Now ddo for eur & sas too
+eur_ld_snp_file <- snpgdsOpen("eur_LD_SNP_format.gds", readonly=F)
+snpgdsAlleleSwitch(eur_ld_snp_file, toupper(eur_gckr_snvs$effect_allele))
+
+sas_ld_snp_file <- snpgdsOpen("sas_LD_SNP_format.gds", readonly=F)
+snpgdsAlleleSwitch(sas_ld_snp_file, toupper(sas_gckr_snvs$effect_allele))
+
+# Does this matter? Like, does this actually do a/t besides rename the alleles?
+# Does it recompute other parts of the GDS file during this switch?
+# I guess try to deciper https://github.com/zhengxwen/SNPRelate/blob/master/src/SNPRelate.cpp#L407
+```
+
+# Compute LD
+```{r}
+# tmp_variant_ids <- seqGetData(gds_1kg, "variant.id")
+# identical(order(tmp_variant_inds, snv_inds)) # TRUE
+# snv_inds from seqFilter... w/ ret.idx=T just does match(in, "annotation/id") under the hood
+  # So the order of snv_inds is in whatever order common_snvs was.
+  # match(x,y) returns a vec "ret" of length 1..i..L where
+  # you need to do y[ret[i]] to get x[i]
+# Feels counter-intuitive... why is snv_inds just 1:13516 then? Can't be right unless
+# the 1kg and DIAMANTE snvs were ordered the exact same way
+
+
+# TODO: which correlation method is preferred?
+#ld_eas <- snpgdsLDMat(gds_1kg, slide=-1, snp.id=snv_inds, sample.id=eas_ids, num.thread=6, method="r")
+#ld_eas$LD[is.na(ld_eas$LD)] <- 0 # TODO: not sure if should do this, but o/w file is messed up. TODO: investigate what is causing the NaNs and possibly find solution based on that (snvs with NA info or s/t?) # It was not (completely, at least) due to small MAFs # Check out what the "composite" correlation is
+#fwrite(ld_eas$LD, "paintor_in/GCKR.ld_r_eas", sep=' ', col.names=F)
+#rm(ld_eas)
+#
+#ld_eur <- snpgdsLDMat(gds_1kg, slide=-1, snp.id=snv_inds, sample.id=eur_ids, num.thread=6, method="r")
+#ld_eur$LD[is.na(ld_eur$LD)] <- 0
+#fwrite(ld_eur$LD, "paintor_in/GCKR.ld_r_eur", sep=' ', col.names=F)
+#rm(ld_eur)
+#
+#ld_sas <- snpgdsLDMat(gds_1kg, slide=-1, snp.id=snv_inds, sample.id=sas_ids, num.thread=6, method="r")
+#ld_sas$LD[is.na(ld_sas$LD)] <- 0
+#fwrite(ld_sas$LD, "paintor_in/GCKR.ld_r_sas", sep=' ', col.names=F)
+
+# TODO:
+# Make sure the GDS2SNP files we made before also match just in case
+# identical(read.gdsn(index.gdsn(eas_ld_snp_file, "snp.rs.id")), eas_gckr_snvs$rsID)
+
+# Alternatively to trying to make the data.tables match the GDS file's order,
+#   could just input snp.id= arg into snpgdsLDMat()? Might be more elegant.
+#   EDIT from the future: nope.
+#   The following is TRUE: identical(ld_eas$snp.id, read.gdsn(index.gdsn(eas_ld_snp_file, "snp.id")))
+#   And if you do snpgdsLDMat(..., snp.id=sort(read.gdsn(index.gdsn(eas_ld_snp_file,"snp.id"), decreasing=T)) )
+#   Then the order of the resulting LD matrix does NOT change accordingly.
+#     I.e. The ld_eas$snp.id is still as normal, as if snpgdsLDMat were never given a deceasingly-sorted snp.id= arg.
+#     And the LD matrix iteslf is as if the arg were never given either...!
+#   Therefore, it seems I am forced to play around whatever order things are in the GDS file.
+eas_ld_snp_file <- snpgdsOpen("eas_LD_SNP_format.gds", readonly=F)
+ld_eas <- snpgdsLDMat(eas_ld_snp_file, slide=0, method="corr", num.thread=4)$LD
+fwrite(ld_eas, "paintor_in/GCKR.ld_corr_eas", sep= ' ', col.names=F)
+eur_ld_snp_file <- snpgdsOpen("eur_LD_SNP_format.gds", readonly=F)
+ld_eur <- snpgdsLDMat(eur_ld_snp_file, slide=0, method="corr", num.thread=4)$LD
+fwrite(ld_eur, "paintor_in/GCKR.ld_corr_eur", sep= ' ', col.names=F)
+sas_ld_snp_file <- snpgdsOpen("sas_LD_SNP_format.gds", readonly=F)
+ld_sas <- snpgdsLDMat(sas_ld_snp_file, slide=0, method="corr", num.thread=4)$LD
+fwrite(ld_sas, "paintor_in/GCKR.ld_corr_sas", sep= ' ', col.names=F)
+```
+
+
+
+
+
