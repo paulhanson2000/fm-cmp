@@ -144,6 +144,7 @@ length(seqGetData(gds_1kg, "annotation/id"))
 length(union(seqGetData(gds_1kg, "annotation/id"), eas_gckr_snvs$rsID)) # they have the same, but not same order
 
 # https://stackoverflow.com/a/37881577
+# data.table setorder() is probably more efficient but also less readable. TODO: decide
 tmp <- match(seqGetData(gds_1kg,"annotation/id"), eas_gckr_snvs$rsID)
 # eas/eur/sas_gckr_snvs all in same order, so we can order them all the same way with tmp
 eas_gckr_snvs <- eas_gckr_snvs[tmp]

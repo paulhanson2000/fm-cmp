@@ -1,3 +1,5 @@
+third_party/mr_mega/*
+
 scratch/eas_LD_SNP_format.gds
 scratch/eur_LD_SNP_format.gds
 scratch/sas_LD_SNP_format.gds
