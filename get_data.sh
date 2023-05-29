@@ -3,6 +3,7 @@
 # Special case for friends using Compute Canada, the data is already here. Just link to it instead of downloading.
 if [ -d /lustre03/project/6074892/datasets/ ]; then
   ln -s /lustre03/project/6074892/datasets/ data
+  echo "Success! The data can be found in the \"data/\" symbolic link that has been added to this directory."
   exit 0
 fi
 
