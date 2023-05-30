@@ -8,8 +8,8 @@ if [ -d /lustre03/project/6074892/datasets/ ]; then
 fi
 
 # DIAMANTE 2022 summary stats
-mkdir -p ./data/DIAMANTE2022/sumstat/
-cd       ./data/DIAMANTE2022/sumstat/
+mkdir ./data/DIAMANTE2022/sumstat/
+cd    ./data/DIAMANTE2022/sumstat/
 wget https://personal.broadinstitute.org/ryank/DIAMANTE.sumstats.zip # Alternative: http://diagram-consortium.org
 unzip DIAMANTE.sumstats.zip
 gzip -d DIAMANTE-EAS.sumstat.txt.gz DIAMANTE-EUR.sumstat.txt.gz DIAMANTE-SAS.sumstat.txt.gz

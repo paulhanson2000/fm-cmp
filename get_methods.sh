@@ -32,5 +32,6 @@ if ! [ -f PAINTOR ]; then
 fi
 cd -
 
-# SuSiEx -- nothing to do
+# CAVIARBF -- is an R package
 # mJAM -- is an R package
+# SuSiEx -- nothing to do
