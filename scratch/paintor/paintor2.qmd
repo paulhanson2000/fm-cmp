@@ -26,7 +26,7 @@ sas <- fread("../../data/DIAMANTE2022/sumstat/DIAMANTE-SAS.sumstat.txt", header=
 ```{r}
 gds_1kg <- seqOpen("../../data/ref/1kg/gds_format/1KG_ALL.autosomes.phase3_shapeit2_mvncall_integrated_v5a.20130502.genotypes.gds")
 #seqSummary(gds_1kg)
-sample_info <- fread("../../data/ref/1kg/gds_format/integrated_call_samples_v3.20130502.ALL.panel", header=F)
+sample_info <- fread("../../data/ref/1kg/sample_info/integrated_call_samples_v3.20130502.ALL.panel", header=F)
 ```
 
 
@@ -95,7 +95,7 @@ Load 1k Genomes reference, and subset to the DIAMANTE SNVs we're interested in.
 ```{r}
 gds_1kg <- seqOpen("../data/ref/1kg/gds_format/1KG_ALL.autosomes.phase3_shapeit2_mvncall_integrated_v5a.20130502.genotypes.gds")
 #seqSummary(gds_1kg)
-sample_info <- fread("../data/ref/1kg/gds_format/integrated_call_samples_v3.20130502.ALL.panel", header=F)
+sample_info <- fread("../data/ref/1kg/sample_info/integrated_call_samples_v3.20130502.ALL.panel", header=F)
 
 samples_eas <- sample_info[V3 == "EAS", V1]
 samples_eur <- sample_info[V3 == "EUR", V1]
@@ -236,6 +236,7 @@ snpgdsAlleleSwitch(sas_ld_snp_file, toupper(sas_gckr_snvs$effect_allele))
 #     I.e. The ld_eas$snp.id is still as normal, as if snpgdsLDMat were never given a deceasingly-sorted snp.id= arg.
 #     And the LD matrix iteslf is as if the arg were never given either...!
 #   Therefore, it seems I am forced to play around whatever order things are in the GDS file.
+# TODO: edit, a week later: Oh, or could just sort the LD matrix AFTER it's calc'd. Duh. :V
 eas_ld_snp_file <- snpgdsOpen("eas_LD_SNP_format.gds", readonly=F)
 ld_eas <- snpgdsLDMat(eas_ld_snp_file, slide=0, method="corr", num.thread=4)$LD
 fwrite(ld_eas, "paintor_in/GCKR.ld_corr_eas", sep= ' ', col.names=F)
