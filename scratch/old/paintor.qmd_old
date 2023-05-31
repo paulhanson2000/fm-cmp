@@ -1,0 +1,87 @@
+---
+title: title
+author: author
+institute: place
+format: html
+execute:
+  cache: true
+---
+
+# Lib
+```{r}
+library(data.table)
+#library(rmarkdown)
+library(SeqArray)
+library(SNPRelate)
+```
+
+# Data
+Ancestry-level (multi-GWAS) summary stats
+```{r}
+#| cache: true
+eas <- fread("../data/DIAMANTE2022/sumstat/DIAMANTE-EAS.sumstat.txt", header=T, select=c("rsID", "position(b37)", "Fixed-effects_beta", "Fixed-effects_SE", "effect_allele_frequency"))
+eur <- fread("../data/DIAMANTE2022/sumstat/DIAMANTE-EUR.sumstat.txt", header=T, select=c("rsID", "position(b37)", "Fixed-effects_beta", "Fixed-effects_SE", "effect_allele_frequency"))
+sas <- fread("../data/DIAMANTE2022/sumstat/DIAMANTE-SAS.sumstat.txt", header=T, select=c("rsID", "position(b37)", "Fixed-effects_beta", "Fixed-effects_SE", "effect_allele_frequency"))
+```
+
+Start with GCKR locus, index SNV rs1260326 (from supplementary table 7)\
+```{r}
+index_snv <- "rs1260326"
+index_snv_pos <- eas[rsID == index_snv, `position(b37)`]
+# TODO: In this case, this SNV's position is the same in all ancestries
+# But write out generalizable form just in case
+
+eas_gckr_snvs <- eas[`position(b37)` < index_snv_pos+100000 &
+                     `position(b37)` > index_snv_pos-100000  ]
+eur_gckr_snvs <- eur[`position(b37)` < index_snv_pos+100000 &
+                     `position(b37)` > index_snv_pos-100000  ]
+sas_gckr_snvs <- sas[`position(b37)` < index_snv_pos+100000 &
+                     `position(b37)` > index_snv_pos-100000  ]
+rm(eas,eur,sas)
+# TODO: replace this w/ GDS seqSet 
+```
+
+TODO: not sure if should do this but just want things to run faster for now
+Subset to SNVS with MAF < 0.05
+```{r}
+eas_gckr_snvs <- eas_gckr_snvs[effect_allele_frequency > 0.05 & effect_allele_frequency < 0.95]
+eur_gckr_snvs <- eur_gckr_snvs[effect_allele_frequency > 0.05 & effect_allele_frequency < 0.95]
+sas_gckr_snvs <- sas_gckr_snvs[effect_allele_frequency > 0.05 & effect_allele_frequency < 0.95]
+```
+
+Subset to SNPs shared by all ancestries, and sort
+```{r}
+# Very fast but could replace this with GDS file stuff too
+# TODO: fast yes, but loading in eas/eur/sas ~beforehand~ is not.
+common_snvs <- Reduce(intersect, list(eas_gckr_snvs$rsID,eur_gckr_snvs$rsID,sas_gckr_snvs$rsID))
+eas_gckr_snvs <- eas_gckr_snvs[rsID %in% common_snvs]
+eur_gckr_snvs <- eur_gckr_snvs[rsID %in% common_snvs]
+sas_gckr_snvs <- sas_gckr_snvs[rsID %in% common_snvs]
+
+eas_gckr_snvs <- eas_gckr_snvs[order(rsID)]
+eur_gckr_snvs <- eur_gckr_snvs[order(rsID)]
+sas_gckr_snvs <- sas_gckr_snvs[order(rsID)]
+```
+
+```{r}
+eas_gckr_snvs$z = eas_gckr_snvs$`Fixed-effects_beta`/eas_gckr_snvs$`Fixed-effects_SE`
+eur_gckr_snvs$z = eur_gckr_snvs$`Fixed-effects_beta`/eur_gckr_snvs$`Fixed-effects_SE`
+sas_gckr_snvs$z = sas_gckr_snvs$`Fixed-effects_beta`/sas_gckr_snvs$`Fixed-effects_SE`
+```
+
+```{r}
+identical(eas_gckr_snvs$rsID, eur_gckr_snvs$rsID)
+identical(eas_gckr_snvs$rsID, sas_gckr_snvs$rsID)
+
+out <- data.table(rsID=eas_gckr_snvs$rsID,
+                  z_eas=eas_gckr_snvs$z,
+                  z_eur=eur_gckr_snvs$z,
+                  z_sas=sas_gckr_snvs$z)
+fwrite(out, "paintor_in/GCKR", sep=' ')
+```
+
+# Make dummy annotation file for now
+```{r}
+dummy_annot <- data.table(dummy_annot=rep(0,length(common_snvs)))
+fwrite(dummy_annot, "paintor_in/GCKR.annotations", sep=' ')
+```

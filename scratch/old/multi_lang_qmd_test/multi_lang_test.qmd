@@ -1,0 +1,20 @@
+---
+title: hi
+author: hello
+format: html
+---
+
+```{r}
+print("R")
+```
+
+```{bash}
+echo -e "\x1b[31mbash\x1b[m"
+./runnable_from_qmd.sh
+```
+
+```{python}
+print("hi from python")
+import os
+os.getcwd()
+```

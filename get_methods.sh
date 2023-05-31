@@ -19,8 +19,12 @@ cd -
   # GSL: https://www.gnu.org/software/gsl/
 cd ./third_party/MsCAVIAR/
 if ! [ -f MsCAVIAR ]; then
-  sed -i 's/-llapack -lblas/-lflexiblas/' Makefile # Change makefile to use flexiblas (lol, cursed)
   make
+  if [ $? -ne 0 ]; then # Didn't work, try Flexiblas.
+    sed -i 's/-llapack -lblas/-lflexiblas/' Makefile # Change makefile to use flexiblas (lol, cursed)
+    make
+    sed -i 's/-lflexiblas/-llapack -lblas/' Makefile # Undo, in case this script needs to be run again.
+  fi
 fi
 cd -
 
