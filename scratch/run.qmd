@@ -1,0 +1,74 @@
+---
+title: title
+author: person
+institute: place
+
+engine: knitr
+format: html
+
+params:
+  # TODO Temporary, ideally would pass in from command line or YAML file
+  # TODO Parse so that user doesn't have to say the confusing magic "!r" word
+  ref_file: "../data/ref/1kg/gds_format/1KG_ALL.autosomes.phase3_shapeit2_mvncall_integrated_v5a.20130502.genotypes.gds"
+  ref_sample_info: "../data/ref/1kg/sample_info/integrated_call_samples_v3.20130502.ALL.panel"
+
+  data_files: !r c("../data/DIAMANTE2022/sumstat/DIAMANTE-EAS.sumstat.txt",
+                   "../data/DIAMANTE2022/sumstat/DIAMANTE-EUR.sumstat.txt",
+                   "../data/DIAMANTE2022/sumstat/DIAMANTE-SAS.sumstat.txt")
+  data_ancestries: !r c("EAS", "EUR", "SAS")
+
+  chr_col: 1
+  pos_col: 2
+  rsid_col: 4
+  effect_allele_col: 5
+  other_allele_col: 6
+  eaf_col: 7
+  b_col: 8
+  se_col: 9
+  pval_col: 10
+
+  locus_list_file: NULL # TODO, instead of asking user to possibly write nested lists in a YAML file 
+  locus_chr: 2
+  pos_min: 27230940
+  pos_max: 28230940
+---
+
+```{r}
+# So that don't need to type "param$var", just "var"
+mapply(assign, names(params), params, MoreArgs=list(inherits=T))
+```
+
+# Lib
+```{r}
+library(data.table)
+library(SeqArray)
+library(SNPRelate)
+```
+
+# Data
+```{r}
+#| output: false
+ref_file <- seqOpen(params$ref_file)
+sample_info <- fread(params$ref_sample_info, header=T)
+
+# TODO: only select the cols actually given. Some may be left blank.
+sumstats <- lapply(params$data_files, fread, header=T, select=c(chr_col, pos_col, rsid_col,
+                                                                other_allele_col, effect_allele_col, eaf_col,
+                                                                b_col, se_col, pval_col))
+lapply(sumstats, setnames, c("chr","pos","rsid","a0","a1","eaf","b","se","p"))
+```
+
+# Subset
+```{r}
+# TODO: remember, mJAM can handle NAs! So, take advantage of that and don't just subset for all methods...
+sumstats <- lapply(sumstats, function(x) x[chr == locus_chr &
+                                           pos > pos_min & pos < pos_max &
+                                           eaf >    0    & eaf <    1     ])
+common_snvs <- lapply(sumstats, function(x) x$rsid)
+common_snvs <- Reduce(intersect, common_snvs)
+sumstats <- lapply(sumstats, function(x) x[rsid %in% common_snvs])
+```
+
+```{r}
+
+```

@@ -1,5 +1,6 @@
 if(!require("BiocManager")) install.packages("BiocManager")
-if(!require("BiocManager")) install.packages("remotes")
+if(!require("remotes")) install.packages("remotes")
+if(!require("quarto")) install.packages("quarto")
 
 if(!require("BiocManager")) install.packages("SeqArray")
 if(!require("BiocManager")) install.packages("SNPRelate")
