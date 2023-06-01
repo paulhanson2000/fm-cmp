@@ -1,9 +1,7 @@
-if(!require("BiocManager")) install.packages("BiocManager")
-if(!require("remotes"))     install.packages("remotes")
-if(!require("quarto"))      install.packages("quarto")
+install.packages(c("BiocManager", "remotes", "quarto"), repos="https://cloud.r-project.org")
 
-if(!require("SeqArray"))  BiocManager::install("SeqArray")
-if(!require("SNPRelate")) BiocManager::install("SNPRelate")
+BiocManager::install(c("SeqArray", "SNPRelate"),
+                     update=F, ask=F)
 
-if(!require("hJAM"))      remotes::install_github("USCbiostats/hJAM")
-if(!require("caviarbf"))  remotes::install_bitbucket("Wenan/caviarbf", subdir="caviarbf-r-package/caviarbf/")
+remotes::install_github("USCbiostats/hJAM")
+remotes::install_bitbucket("Wenan/caviarbf", subdir="caviarbf-r-package/caviarbf/")

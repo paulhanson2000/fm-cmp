@@ -1,4 +1,5 @@
 data
+*.gds
 third_party/mr_mega/*
 
 scratch/paintor/eas_LD_SNP_format.gds
@@ -7,5 +8,4 @@ scratch/paintor/sas_LD_SNP_format.gds
 scratch/paintor/PAINTOR
 scratch/paintor/in/*
 scratch/paintor/out/*
-
 scratch/susiex/out/*
