@@ -1,42 +1,8 @@
 ---
 title: title
-author: person
-institute: place
-
 engine: knitr
 format: html
-
-params:
-  # TODO Temporary, ideally would pass in from command line or YAML file
-  # TODO Parse so that user doesn't have to say the confusing magic "!r" word
-  ref_file: "../data/ref/1kg/gds_format/1KG_ALL.autosomes.phase3_shapeit2_mvncall_integrated_v5a.20130502.genotypes.gds"
-  ref_sample_info: "../data/ref/1kg/sample_info/integrated_call_samples_v3.20130502.ALL.panel"
-
-  data_files: !r c("../data/DIAMANTE2022/sumstat/DIAMANTE-EAS.sumstat.txt",
-                   "../data/DIAMANTE2022/sumstat/DIAMANTE-EUR.sumstat.txt",
-                   "../data/DIAMANTE2022/sumstat/DIAMANTE-SAS.sumstat.txt")
-  data_ancestries: !r c("EAS", "EUR", "SAS")
-
-  chr_col: 1
-  pos_col: 2
-  rsid_col: 4
-  effect_allele_col: 5
-  other_allele_col: 6
-  eaf_col: 7
-  b_col: 8
-  se_col: 9
-  pval_col: 10
-
-  locus_list_file: NULL # TODO, instead of asking user to possibly write nested lists in a YAML file 
-  locus_chr: 2
-  pos_min: 27230940
-  pos_max: 28230940
 ---
-
-```{r}
-# So that don't need to type "param$var", just "var"
-mapply(assign, names(params), params, MoreArgs=list(inherits=T))
-```
 
 # Lib
 ```{r}
@@ -47,26 +13,77 @@ library(SNPRelate)
 
 # Data
 ```{r}
-#| output: false
-ref_file <- seqOpen(params$ref_file)
-sample_info <- fread(params$ref_sample_info, header=T)
+data_configs <- fread("data.config")
+data_configs <- split(data_configs, rownames(data_configs)) # Turn into list of rows
+#data_configs <- apply(data_configs, 1, as.list, simplify=F) # Same thing but uglier
 
+locus_configs <- fread("locus.config")
+# TODO: Temporarily just one locus at a time for now. Or just keep it this way but run the script multiple times? __No__, because then would be loading the data multiple times.
+#locus_configs <- split(locus_configs, rownames(locus_configs))
+lchr <- locus_configs$chr
+pos_min <- locus_configs$pos_min
+pos_max <- locus_configs$pos_max
+```
+## Summary stats
+```{r}
+#| output: false
 # TODO: only select the cols actually given. Some may be left blank.
-sumstats <- lapply(params$data_files, fread, header=T, select=c(chr_col, pos_col, rsid_col,
-                                                                other_allele_col, effect_allele_col, eaf_col,
-                                                                b_col, se_col, pval_col))
-lapply(sumstats, setnames, c("chr","pos","rsid","a0","a1","eaf","b","se","p"))
+sumstats <- lapply(data_configs, function(d) {
+  ss <- fread(d$filepath, header=T, select=c(d$chr_col, d$pos_col, d$rsid_col, d$other_allele_col, d$effect_allele_col, d$eaf_col, d$b_col, d$se_col, d$p_col))
+  setnames(ss,                             c( "chr",     "pos",     "rsid",     "a0",                "a1",               "eaf",     "b",     "se",     "p"   ))
+})
+```
+## Reference panel
+```{r}
+#| output: false
+# TODO: Hardcoded to use 1kG for now. I'd need to see what other ref panels look like to generalize.
+ref <- seqOpen("../data/ref/1kg/gds_format/1KG_ALL.autosomes.phase3_shapeit2_mvncall_integrated_v5a.20130502.genotypes.gds", readonly=F)
+
+# TODO: Move to a pre-process script and store output somewhere. Annoying, but the "data/" dir should really remain untouched. Should be able to look in there and take md5sums and be confident e/t in there is raw.
+sample_info <- fread("../data/ref/1kg/sample_info/integrated_call_samples_v3.20130502.ALL.panel")
+identical(seqGetData(ref,"sample.id"), sample_info$sample)
+seqAddValue(ref, "sample.annotation/ancestry", sample_info$super_pop)
+seqAddValue(ref, "sample.annotation/gender", sample_info$gender)
 ```
 
 # Subset
 ```{r}
-# TODO: remember, mJAM can handle NAs! So, take advantage of that and don't just subset for all methods...
-sumstats <- lapply(sumstats, function(x) x[chr == locus_chr &
-                                           pos > pos_min & pos < pos_max &
-                                           eaf >    0    & eaf <    1     ])
-common_snvs <- lapply(sumstats, function(x) x$rsid)
-common_snvs <- Reduce(intersect, common_snvs)
-sumstats <- lapply(sumstats, function(x) x[rsid %in% common_snvs])
+# TODO: mJAM can handle NAs! So, take advantage of that and don't just subset for all methods...
+# TODO: Can't find an optimal + elegant way to order these subset steps.
+  # Doing seqAlleleFreq(ref) before setting filters is way too slow.
+
+# TODO: Only 1 locus at a time for now. How to write elegantly for multiple? (Probably) Not nested lapply's and "sumstatss".
+  # outer lapply by locus kinda bulky and loading all that into memory hurts.
+  # Perhaps, wrap this all into a function, to run once per locus, and then loop over that.
+
+# Filter by valid/desired variants in sumstats
+sumstats <- lapply(sumstats, function(x) x[ chr ==  lchr  &
+                                            pos > pos_min &
+                                            pos < pos_max &
+                                            eaf >    0    &
+                                            eaf <    1      ])
+
+# Filter by SNVs common to all sumstats files
+snvs <- lapply(sumstats, function(x) x$rsid)
+common_snvs <- Reduce(intersect, snvs)
+sumstats <- lapply(sumstats, function(x) x[ rsid %in% common_snvs])
+seqSetFilterAnnotID(ref, common_snvs)
+
+# Filter by what variants are valid in reference panel
+ancestries <- unique(sapply(data_configs, function(d) d$ancestry))
+ancestry_AFs <- lapply(ancestries, function(a) {
+  seqResetFilter(ref, variant=F)
+  samples_of_this_ancestry <- seqGetData(ref,"sample.annotation/ancestry") == a
+  seqSetFilter(ref, sample.sel = samples_of_this_ancestry)
+  seqAlleleFreq(ref, ref.allele=1) # TODO: Not ~quite~ correct b/c only the first allele of multi-allelic variants get considered
+})
+seqResetFilter(ref, variant=F)
+
+# TODO:TODO: untested, just finish writing and verify quickly
+seqSetFilter( # TODO: if any of the ancestries' AF for that variant bad, toss )
+common_snvs <- intersect(common_snvs, seqGetData(ref,"annotation/id"))
+sumstats <- lapply(sumstats, function(x) x[ rsid %in% common_snvs]) # Yes, repeated code, but to calc AFs before filtering would take forever.
+
 ```
 
 ```{r}
