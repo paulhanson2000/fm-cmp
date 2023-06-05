@@ -1,11 +1,13 @@
 ---
 title: title
+toc: true
 engine: knitr
 format: html
 ---
 
 # Lib
 ```{r}
+#| output: false
 library(data.table)
 library(SeqArray)
 library(SNPRelate)
@@ -14,12 +16,13 @@ library(SNPRelate)
 # Data
 ```{r}
 data_configs <- fread("data.config")
-data_configs <- split(data_configs, rownames(data_configs)) # Turn into list of rows
+data_configs <- split(data_configs, rownames(data_configs)) # Turn into list of the rows
 #data_configs <- apply(data_configs, 1, as.list, simplify=F) # Same thing but uglier
 
 locus_configs <- fread("locus.config")
 # TODO: Temporarily just one locus at a time for now. Or just keep it this way but run the script multiple times? __No__, because then would be loading the data multiple times.
 #locus_configs <- split(locus_configs, rownames(locus_configs))
+lnm <- locus_configs$locus
 lchr <- locus_configs$chr
 pos_min <- locus_configs$pos_min
 pos_max <- locus_configs$pos_max
@@ -37,13 +40,13 @@ sumstats <- lapply(data_configs, function(d) {
 ```{r}
 #| output: false
 # TODO: Hardcoded to use 1kG for now. I'd need to see what other ref panels look like to generalize.
-ref <- seqOpen("../data/ref/1kg/gds_format/1KG_ALL.autosomes.phase3_shapeit2_mvncall_integrated_v5a.20130502.genotypes.gds", readonly=F)
+ref <- seqOpen("../data/ref/1kg/gds_format/1KG_ALL.autosomes.phase3_shapeit2_mvncall_integrated_v5a.20130502.genotypes.gds", readonly=F, allow.duplicate=T)
 
-# TODO: Move to a pre-process script and store output somewhere. Annoying, but the "data/" dir should really remain untouched. Should be able to look in there and take md5sums and be confident e/t in there is raw.
+# TODO: Move to a pre-process script and perform on a COPY of the data and store s/where. Annoying, but the "data/" dir should really remain untouched. Should be able to look in there and take md5sums and be confident e/t in there is raw.
 sample_info <- fread("../data/ref/1kg/sample_info/integrated_call_samples_v3.20130502.ALL.panel")
 identical(seqGetData(ref,"sample.id"), sample_info$sample)
-seqAddValue(ref, "sample.annotation/ancestry", sample_info$super_pop)
-seqAddValue(ref, "sample.annotation/gender", sample_info$gender)
+seqAddValue(ref, "sample.annotation/ancestry", sample_info$super_pop, replace=T)
+seqAddValue(ref, "sample.annotation/gender", sample_info$gender, replace=T)
 ```
 
 # Subset
@@ -62,30 +65,96 @@ sumstats <- lapply(sumstats, function(x) x[ chr ==  lchr  &
                                             pos < pos_max &
                                             eaf >    0    &
                                             eaf <    1      ])
+#TODO: move the anc-specific af stuff and subset by THAT valid stuff here,
+  # And then do all the common snvs stuff subsetting at the end?
 
-# Filter by SNVs common to all sumstats files
+# Filter ref by variants common to all sumstats files
 snvs <- lapply(sumstats, function(x) x$rsid)
 common_snvs <- Reduce(intersect, snvs)
-sumstats <- lapply(sumstats, function(x) x[ rsid %in% common_snvs])
 seqSetFilterAnnotID(ref, common_snvs)
 
-# Filter by what variants are valid in reference panel
+# Filter ref by variants where MAF > 0 for ~every~ ancestry
 ancestries <- unique(sapply(data_configs, function(d) d$ancestry))
-ancestry_AFs <- lapply(ancestries, function(a) {
+
+samples_of_each_ancestry <- lapply(ancestries, function(a) {
   seqResetFilter(ref, variant=F)
   samples_of_this_ancestry <- seqGetData(ref,"sample.annotation/ancestry") == a
   seqSetFilter(ref, sample.sel = samples_of_this_ancestry)
-  seqAlleleFreq(ref, ref.allele=1) # TODO: Not ~quite~ correct b/c only the first allele of multi-allelic variants get considered
+  seqGetData(ref, "sample.id")
 })
 seqResetFilter(ref, variant=F)
 
-# TODO:TODO: untested, just finish writing and verify quickly
-seqSetFilter( # TODO: if any of the ancestries' AF for that variant bad, toss )
-common_snvs <- intersect(common_snvs, seqGetData(ref,"annotation/id"))
-sumstats <- lapply(sumstats, function(x) x[ rsid %in% common_snvs]) # Yes, repeated code, but to calc AFs before filtering would take forever.
+ancestry_AFs <- lapply(samples_of_each_ancestry, function(samples_of_an_ancestry) {
+  seqResetFilter(ref, variant=F)
+  seqSetFilter(ref, sample.id = samples_of_an_ancestry)
+  seqAlleleFreq(ref, ref.allele=1) # TODO: Not ~quite~ correct b/c only the first allele of multi-allelic variants get considered
+})
+seqResetFilter(ref, variant=F)
+ancestry_AFs <- Reduce(cbind, ancestry_AFs) # Lists of AFs -> matrix with snv rows, ancestry cols
 
+valid_snvs_in_ref <- apply(ancestry_AFs, 1, function(snv_afs) all(snv_afs>0 & snv_afs<1))
+seqSetFilter(ref, variant.sel=valid_snvs_in_ref, action="intersect")
+
+# Filter by variants common to all sumstats AND ref
+common_snvs <- intersect(common_snvs, seqGetData(ref,"annotation/id"))
+sumstats <- lapply(sumstats, function(x) x[rsid %in% common_snvs])
+sumstats <- lapply(sumstats, function(x) x[     order(rsid)     ]) # Put all sumstats same order, by rs id.
+```
+
+# LD
+```{r}
+# TODO: calc_ld.R was in fact inelegant, bad. Instead, have the fn take a gds pointer and assume the filters you want are already applied.
+  # Also my function is bad b/c it has the side-effect of closing the file.
+  # Just embrace the GDS fully, expect the user to use a GDS file as input, and rewrite the fn to expect a pointer to a GDS file.
+lds <- mapply(sumstats, samples_of_each_ancestry, SIMPLIFY=F,
+FUN= function(sumstat,  samples_of_an_ancestry) {
+  seqSetFilter(ref, sample.id = samples_of_an_ancestry)
+  tmp_filename <- "/tmp/snpgds_format_file.gds"
+  seqGDS2SNP(ref, tmp_filename, compress.geno="", compress.annotation="")
+  tmp <- snpgdsOpen(tmp_filename, readonly=F)
+  snpgdsAlleleSwitch(tmp, toupper(sumstat$a0))
+  ld <- snpgdsLDMat(tmp, slide=0, method="corr", num.thread=parallel::detectCores())$LD
+
+  snpgdsClose(tmp)
+  unlink(tmp_filename)
+
+  # Sort LD matrix to match order of rs IDs in sumstats
+  snv_order <- match(sumstat$rsid, seqGetData(ref, "annotation/id"))
+  ld[snv_order,snv_order]
+})
+```
+
+
+# Run Methods
+## SuSiEx
+### Prep Input
+SuSiEx is a command-line python program. It expects the following: \
+A summary stats file, with at least chromosome, position, ID, effect and alternate allele, <TODO> \
+
+The β column must be named "BETA" (a bit annoying).
+```{r}
+mapply(sumstats, ancestries, FUN=function(ss,anc) {
+  setnames(ss, old="b", new="BETA", skip_absent=T)
+  fwrite(ss, paste0("susiex/in/sumstat-",anc,".txt"), sep=' ')
+  setnames(ss, old="BETA", new="b", skip_absent=T)
+})
 ```
 
 ```{r}
+# TODO: PLINK stuff :(
+  # Wait no nvm, just use the ld already computed!! Just need to make sure it mostly agrees w/ what PLINK outputs.
+#sapply(samples_of_each_ancestry, function(samples_of_an_ancestry) {
+#  seqSetFilter(ref, sample.id=samples_of_an_ancestry)
+#  seqGDS2BED(ref, lnm) 
+#})
+```
 
+### Run SuSiEx
+```{r}
+paste(collapse=',', paste0("susiex/in/sumstat-",ancestries,".txt"))
+# paste(collapse=',', ) TODO: add fwrite() to ld calc part
+paste(collapse=',', paste0(sapply(data_configs, function(d) d$n)))
+paste(collapse=',', paste0(
+system(paste0("python3 ../third_party/SuSiEx/SuSiEx.py \\",
+              "--sst_file=",
 ```

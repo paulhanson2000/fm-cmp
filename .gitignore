@@ -1,6 +1,8 @@
 data
 *.gds
+*.html
 third_party/mr_mega/*
+*_files/
 
 scratch/paintor/eas_LD_SNP_format.gds
 scratch/paintor/eur_LD_SNP_format.gds

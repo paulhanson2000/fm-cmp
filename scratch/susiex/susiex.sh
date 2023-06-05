@@ -29,7 +29,7 @@ python3 ../../third_party/SuSiEx/SuSiEx.py \
   --out_dir=out \
   --out_name=test \
   --chr=2 `#TODO` \
-  --bp=27230940,28230940 `#TODO` \
+  --bp=27630940,27830940 \
   --chr_col=1,1,1 `# chromosome(b37) col` \
   --snp_col=4,4,4 `# rsID col` \
   --bp_col=2,2,2  `# position(b37) col` \
@@ -40,8 +40,9 @@ python3 ../../third_party/SuSiEx/SuSiEx.py \
   --pval_col=10,10,10 `# Fixed-effects_p-value` \
   --mult-step=True \
   --maf=0.01 \
-  --keep-ambig=True
-  # defaults: --max_iter=100, --pval_thresh=1e-5, --tol=1e-4, --n_sig=5, --level=95%, --min_purity=0.5, --full_out=NULL
+  --keep-ambig=True \
+  --full_out=True `# output ALL snps used in fine-mapping in out.cs`
+  # defaults: --max_iter=100, --pval_thresh=1e-5, --tol=1e-4, --n_sig=5, --level=95%, --min_purity=0.5
 
 
 #rm ${sumstats_eas} ${sumstats_eur} ${sumstats_sas}
