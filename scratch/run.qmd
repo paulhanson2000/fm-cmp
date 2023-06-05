@@ -16,15 +16,10 @@ library(SNPRelate)
 # Data
 ```{r}
 data_configs <- fread("data.config")
-data_configs <- split(data_configs, rownames(data_configs)) # Turns into list of the rows
-#data_configs <- apply(data_configs, 1, as.list, simplify=F) # ^ but uglier
-# TODO: Handle multiple sumstats having the same ancestry
-
-
 locus_configs <- fread("locus.config")
+
 # TODO: Temporarily just one locus at a time for now. Or just keep it this way but run the script multiple times? __No__, because then would be loading the data multiple times.
   # BUT what about needlessly holding all those LD mats, taking up memory? Come up w/ an in-between solution that only loads the initial data once, but doesn't require holding the LDs for all the variants in mem @ once before even getting to the methods.
-#locus_configs <- split(locus_configs, rownames(locus_configs))
 lnm <- locus_configs$locus
 lchr <- locus_configs$chr
 pos_min <- locus_configs$pos_min
@@ -33,10 +28,10 @@ pos_max <- locus_configs$pos_max
 ## Summary stats
 ```{r}
 #| output: false
-# TODO: only select the cols actually given. Some may be left blank.
-sumstats <- lapply(data_configs, function(d) {
-  sumstat <- fread(d$filepath, header=T, select=c(d$chr_col, d$pos_col, d$rsid_col, d$other_allele_col, d$effect_allele_col, d$eaf_col, d$b_col, d$se_col, d$p_col))
-  setnames(sumstat,                             c( "chr",     "pos",     "rsid",     "a0",                "a1",               "eaf",     "b",     "se",     "p"   ))
+sumstats <- lapply(1:nrow(data_configs), function(r) {
+  sumstat          <-       data_configs[r, fread(filepath, select=c(chr_col, pos_col, rsid_col, other_allele_col, effect_allele_col, eaf_col, b_col, se_col, p_col))]
+  unspecified_cols <- is.na(data_configs[r,                        .(chr_col, pos_col, rsid_col, other_allele_col, effect_allele_col, eaf_col, b_col, se_col, p_col)])
+  setnames(sumstat,                                               c("chr",   "pos",   "rsid",   "a0",             "a1",              "eaf",   "b",   "se",   "p"   )[!unspecified_cols])
 })
 ```
 ## Reference panel
