@@ -1,13 +1,14 @@
 data
 *.gds
+*.ld
+*.gz
+
 *.html
-third_party/mr_mega/*
 *_files/
 
-scratch/paintor/eas_LD_SNP_format.gds
-scratch/paintor/eur_LD_SNP_format.gds
-scratch/paintor/sas_LD_SNP_format.gds
-scratch/paintor/PAINTOR
-scratch/paintor/in/*
-scratch/paintor/out/*
-scratch/susiex/out/*
+third_party/mr_mega/
+
+scratch/in/
+scratch/out/
+
+scratch/other/paintor/PAINTOR

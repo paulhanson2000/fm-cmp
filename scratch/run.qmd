@@ -16,11 +16,14 @@ library(SNPRelate)
 # Data
 ```{r}
 data_configs <- fread("data.config")
-data_configs <- split(data_configs, rownames(data_configs)) # Turn into list of the rows
-#data_configs <- apply(data_configs, 1, as.list, simplify=F) # Same thing but uglier
+data_configs <- split(data_configs, rownames(data_configs)) # Turns into list of the rows
+#data_configs <- apply(data_configs, 1, as.list, simplify=F) # ^ but uglier
+# TODO: Handle multiple sumstats having the same ancestry
+
 
 locus_configs <- fread("locus.config")
 # TODO: Temporarily just one locus at a time for now. Or just keep it this way but run the script multiple times? __No__, because then would be loading the data multiple times.
+  # BUT what about needlessly holding all those LD mats, taking up memory? Come up w/ an in-between solution that only loads the initial data once, but doesn't require holding the LDs for all the variants in mem @ once before even getting to the methods.
 #locus_configs <- split(locus_configs, rownames(locus_configs))
 lnm <- locus_configs$locus
 lchr <- locus_configs$chr
@@ -32,14 +35,14 @@ pos_max <- locus_configs$pos_max
 #| output: false
 # TODO: only select the cols actually given. Some may be left blank.
 sumstats <- lapply(data_configs, function(d) {
-  ss <- fread(d$filepath, header=T, select=c(d$chr_col, d$pos_col, d$rsid_col, d$other_allele_col, d$effect_allele_col, d$eaf_col, d$b_col, d$se_col, d$p_col))
-  setnames(ss,                             c( "chr",     "pos",     "rsid",     "a0",                "a1",               "eaf",     "b",     "se",     "p"   ))
+  sumstat <- fread(d$filepath, header=T, select=c(d$chr_col, d$pos_col, d$rsid_col, d$other_allele_col, d$effect_allele_col, d$eaf_col, d$b_col, d$se_col, d$p_col))
+  setnames(sumstat,                             c( "chr",     "pos",     "rsid",     "a0",                "a1",               "eaf",     "b",     "se",     "p"   ))
 })
 ```
 ## Reference panel
 ```{r}
 #| output: false
-# TODO: Hardcoded to use 1kG for now. I'd need to see what other ref panels look like to generalize.
+# TODO: Hardcoded to use 1kG for now. Possibly support TOPMed later.
 ref <- seqOpen("../data/ref/1kg/gds_format/1KG_ALL.autosomes.phase3_shapeit2_mvncall_integrated_v5a.20130502.genotypes.gds", readonly=F, allow.duplicate=T)
 
 # TODO: Move to a pre-process script and perform on a COPY of the data and store s/where. Annoying, but the "data/" dir should really remain untouched. Should be able to look in there and take md5sums and be confident e/t in there is raw.
@@ -51,9 +54,11 @@ seqAddValue(ref, "sample.annotation/gender", sample_info$gender, replace=T)
 
 # Subset
 ```{r}
+#| output: false
+# TODO: tapply could be more readable/elegant than this "samples_of_each_ancestry" stuff?
+  # s/t s/t tapply(..., INDEX=as.factor(seqGetData(ref, "sample.annotation/ancestry"))?
+
 # TODO: mJAM can handle NAs! So, take advantage of that and don't just subset for all methods...
-# TODO: Can't find an optimal + elegant way to order these subset steps.
-  # Doing seqAlleleFreq(ref) before setting filters is way too slow.
 
 # TODO: Only 1 locus at a time for now. How to write elegantly for multiple? (Probably) Not nested lapply's and "sumstatss".
   # outer lapply by locus kinda bulky and loading all that into memory hurts.
@@ -76,13 +81,14 @@ seqSetFilterAnnotID(ref, common_snvs)
 # Filter ref by variants where MAF > 0 for ~every~ ancestry
 ancestries <- unique(sapply(data_configs, function(d) d$ancestry))
 
-samples_of_each_ancestry <- lapply(ancestries, function(a) {
+samples_of_each_ancestry <- lapply(ancestries, USE.NAMES=T, function(a) {
   seqResetFilter(ref, variant=F)
   samples_of_this_ancestry <- seqGetData(ref,"sample.annotation/ancestry") == a
   seqSetFilter(ref, sample.sel = samples_of_this_ancestry)
   seqGetData(ref, "sample.id")
 })
 seqResetFilter(ref, variant=F)
+names(samples_of_each_ancestry) <- ancestries
 
 ancestry_AFs <- lapply(samples_of_each_ancestry, function(samples_of_an_ancestry) {
   seqResetFilter(ref, variant=F)
@@ -103,11 +109,13 @@ sumstats <- lapply(sumstats, function(x) x[     order(rsid)     ]) # Put all sum
 
 # LD
 ```{r}
-# TODO: calc_ld.R was in fact inelegant, bad. Instead, have the fn take a gds pointer and assume the filters you want are already applied.
+# TODO: calc_ld.R was in fact inelegant, bad. Instead, have the fn take a gds pointer assuming the filters you want are already applied.
   # Also my function is bad b/c it has the side-effect of closing the file.
   # Just embrace the GDS fully, expect the user to use a GDS file as input, and rewrite the fn to expect a pointer to a GDS file.
-lds <- mapply(sumstats, samples_of_each_ancestry, SIMPLIFY=F,
-FUN= function(sumstat,  samples_of_an_ancestry) {
+# TODO: Alternatively: calc_ld <- function <"FUN = stuff", but also w/ locus>; Vectorize(calc_ld, vectorize.args=c("sumstat","samples")); Vectorize(calc_ldv, vectorize.args=c("locus"). Also SIMPLIFY=F. May be more readable?
+  # B/c then can just do calc_ld(sumstats, samples_of_each_ancestry, loci)
+lds <- mapply(samples_of_each_ancestry, sumstats, SIMPLIFY=F,
+FUN = function(samples_of_an_ancestry,  sumstat) {
   seqSetFilter(ref, sample.id = samples_of_an_ancestry)
   tmp_filename <- "/tmp/snpgds_format_file.gds"
   seqGDS2SNP(ref, tmp_filename, compress.geno="", compress.annotation="")
@@ -122,6 +130,8 @@ FUN= function(sumstat,  samples_of_an_ancestry) {
   snv_order <- match(sumstat$rsid, seqGetData(ref, "annotation/id"))
   ld[snv_order,snv_order]
 })
+
+mapply(lds, ancestries, FUN = function(ld, a) fwrite(ld, paste0("in/ld/",a,".ld"), sep=' '))
 ```
 
 
@@ -135,26 +145,21 @@ The β column must be named "BETA" (a bit annoying).
 ```{r}
 mapply(sumstats, ancestries, FUN=function(ss,anc) {
   setnames(ss, old="b", new="BETA", skip_absent=T)
-  fwrite(ss, paste0("susiex/in/sumstat-",anc,".txt"), sep=' ')
+  fwrite(ss, paste0("in/susiex/sumstat-",anc,".txt"), sep=' ')
   setnames(ss, old="BETA", new="b", skip_absent=T)
 })
 ```
 
 ```{r}
 # TODO: PLINK stuff :(
-  # Wait no nvm, just use the ld already computed!! Just need to make sure it mostly agrees w/ what PLINK outputs.
-#sapply(samples_of_each_ancestry, function(samples_of_an_ancestry) {
-#  seqSetFilter(ref, sample.id=samples_of_an_ancestry)
-#  seqGDS2BED(ref, lnm) 
-#})
+  # NOTE TO SELF: see daily note 230605. Letting SuSiEx recompute its own LD for now just to get things working.
 ```
 
 ### Run SuSiEx
 ```{r}
-paste(collapse=',', paste0("susiex/in/sumstat-",ancestries,".txt"))
-# paste(collapse=',', ) TODO: add fwrite() to ld calc part
 paste(collapse=',', paste0(sapply(data_configs, function(d) d$n)))
 paste(collapse=',', paste0(
 system(paste0("python3 ../third_party/SuSiEx/SuSiEx.py \\",
-              "--sst_file=",
+              "--sst_file=", paste(collapse=',', paste0("in/susiex/sumstat-",ancestries,".txt")),
+              "--n_gwas=",   paste(collapse=',', sapply(data_configs, function(d) d$n))
 ```
