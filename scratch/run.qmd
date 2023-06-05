@@ -19,7 +19,8 @@ data_configs <- fread("data.config")
 locus_configs <- fread("locus.config")
 
 # TODO: Temporarily just one locus at a time for now. Or just keep it this way but run the script multiple times? __No__, because then would be loading the data multiple times.
-  # BUT what about needlessly holding all those LD mats, taking up memory? Come up w/ an in-between solution that only loads the initial data once, but doesn't require holding the LDs for all the variants in mem @ once before even getting to the methods.
+  # But what about needlessly holding all those LD mats in mem? Maybe a middleground that only loads the initial data once, and also doesn't require holding the LDs @ once for all loci in mem before even getting to the methods.
+  # Or maybe n/ of this matters b/c all the LD has to be written to file a/w so might as well rm() the object right after.
 lnm <- locus_configs$locus
 lchr <- locus_configs$chr
 pos_min <- locus_configs$pos_min
@@ -29,10 +30,14 @@ pos_max <- locus_configs$pos_max
 ```{r}
 #| output: false
 sumstats <- lapply(1:nrow(data_configs), function(r) {
-  sumstat          <-       data_configs[r, fread(filepath, select=c(chr_col, pos_col, rsid_col, other_allele_col, effect_allele_col, eaf_col, b_col, se_col, p_col))]
-  unspecified_cols <- is.na(data_configs[r,                        .(chr_col, pos_col, rsid_col, other_allele_col, effect_allele_col, eaf_col, b_col, se_col, p_col)])
-  setnames(sumstat,                                               c("chr",   "pos",   "rsid",   "a0",             "a1",              "eaf",   "b",   "se",   "p"   )[!unspecified_cols])
+  sumstat          <-       data_configs[r, fread(filepath, select=c(chr_col, pos_col, rsid_col, other_allele_col, effect_allele_col, eaf_col, b_col, se_col, z_col, p_col))]
+  unspecified_cols <- is.na(data_configs[r,                        .(chr_col, pos_col, rsid_col, other_allele_col, effect_allele_col, eaf_col, b_col, se_col, z_col, p_col)])
+  setnames(sumstat,                                               c("chr",   "pos",   "rsid",   "a0",             "a1",              "eaf",   "b",   "se",   "z",   "p"   )[!unspecified_cols])
+  sumstat[, `:=`(a0=toupper(a0), a1=toupper(a1))]
+  if(data_configs[r, is.na(z_col) & !is.na(b_col) & !is.na(se_col)]) sumstat[, z := b/se]
+  # TODO: s/t s/t complete.cases or w/e to deal w/ remaining NAs, and be verbose about what is removed.
 })
+names(sumstats) <- paste0("sumstat", 1:length(sumstats))
 ```
 ## Reference panel
 ```{r}
@@ -51,55 +56,53 @@ seqAddValue(ref, "sample.annotation/gender", sample_info$gender, replace=T)
 ```{r}
 #| output: false
 # TODO: tapply could be more readable/elegant than this "samples_of_each_ancestry" stuff?
-  # s/t s/t tapply(..., INDEX=as.factor(seqGetData(ref, "sample.annotation/ancestry"))?
+  # s/t s/t tapply(seqGetData(ref,"sample.id"), INDEX=factor(seqGetData(ref, "sample.annotation/ancestry"))
 
 # TODO: mJAM can handle NAs! So, take advantage of that and don't just subset for all methods...
+  # I think this is actually pretty easy, just save the subset by common_rsids for later,
+  # And calc LD for the unique(union(lapply(sumstats, function(s) s$rsid
 
 # TODO: Only 1 locus at a time for now. How to write elegantly for multiple? (Probably) Not nested lapply's and "sumstatss".
   # outer lapply by locus kinda bulky and loading all that into memory hurts.
   # Perhaps, wrap this all into a function, to run once per locus, and then loop over that.
 
 # Filter by valid/desired variants in sumstats
-sumstats <- lapply(sumstats, function(x) x[ chr ==  lchr  &
-                                            pos > pos_min &
-                                            pos < pos_max &
-                                            eaf >    0    &
-                                            eaf <    1      ])
-#TODO: move the anc-specific af stuff and subset by THAT valid stuff here,
-  # And then do all the common snvs stuff subsetting at the end?
+sumstats <- lapply(sumstats, function(ss) ss[ chr ==  lchr  &
+                                              pos > pos_min &
+                                              pos < pos_max &
+                                              eaf >    0    &
+                                              eaf <    1      ])
 
 # Filter ref by variants common to all sumstats files
-snvs <- lapply(sumstats, function(x) x$rsid)
-common_snvs <- Reduce(intersect, snvs)
-seqSetFilterAnnotID(ref, common_snvs)
+rsids <- lapply(sumstats, function(ss) ss$rsid)
+common_rsids <- Reduce(intersect, rsids)
+seqSetFilterAnnotID(ref, common_rsids)
 
 # Filter ref by variants where MAF > 0 for ~every~ ancestry
-ancestries <- unique(sapply(data_configs, function(d) d$ancestry))
+ancestries <- unique(data_configs$ancestry)
+names(ancestries) <- ancestries # TODO: ocd, technically not necessary, only helps readability in dev but not final product, bothering me a little
 
-samples_of_each_ancestry <- lapply(ancestries, USE.NAMES=T, function(a) {
+samples_of_each_ancestry <- lapply(ancestries, function(a) {
   seqResetFilter(ref, variant=F)
   samples_of_this_ancestry <- seqGetData(ref,"sample.annotation/ancestry") == a
   seqSetFilter(ref, sample.sel = samples_of_this_ancestry)
   seqGetData(ref, "sample.id")
 })
-seqResetFilter(ref, variant=F)
-names(samples_of_each_ancestry) <- ancestries
 
 ancestry_AFs <- lapply(samples_of_each_ancestry, function(samples_of_an_ancestry) {
   seqResetFilter(ref, variant=F)
   seqSetFilter(ref, sample.id = samples_of_an_ancestry)
   seqAlleleFreq(ref, ref.allele=1) # TODO: Not ~quite~ correct b/c only the first allele of multi-allelic variants get considered
 })
-seqResetFilter(ref, variant=F)
-ancestry_AFs <- Reduce(cbind, ancestry_AFs) # Lists of AFs -> matrix with snv rows, ancestry cols
+ancestry_AFs <- as.data.table(ancestry_AFs) # variant rows, ancestry cols
 
-valid_snvs_in_ref <- apply(ancestry_AFs, 1, function(snv_afs) all(snv_afs>0 & snv_afs<1))
-seqSetFilter(ref, variant.sel=valid_snvs_in_ref, action="intersect")
+valid_vs_in_ref <- apply(ancestry_AFs, 1, function(v_afs) all(v_afs>0 & v_afs<1))
+seqSetFilter(ref, variant.sel=valid_vs_in_ref, action="intersect")
 
 # Filter by variants common to all sumstats AND ref
-common_snvs <- intersect(common_snvs, seqGetData(ref,"annotation/id"))
-sumstats <- lapply(sumstats, function(x) x[rsid %in% common_snvs])
-sumstats <- lapply(sumstats, function(x) x[     order(rsid)     ]) # Put all sumstats same order, by rs id.
+common_rsids <- intersect(common_rsids, seqGetData(ref,"annotation/id"))
+sumstats <- lapply(sumstats, function(ss) ss[rsid %in% common_rsids])
+sumstats <- lapply(sumstats, function(ss) ss[      order(rsid)     ]) # Put all sumstats same order, by rs id.
 ```
 
 # LD
@@ -122,26 +125,25 @@ FUN = function(samples_of_an_ancestry,  sumstat) {
   unlink(tmp_filename)
 
   # Sort LD matrix to match order of rs IDs in sumstats
-  snv_order <- match(sumstat$rsid, seqGetData(ref, "annotation/id"))
+  snv_order <- match(seqGetData(ref, "annotation/id"), sumstat$rsid)
   ld[snv_order,snv_order]
 })
 
 mapply(lds, ancestries, FUN = function(ld, a) fwrite(ld, paste0("in/ld/",a,".ld"), sep=' '))
 ```
 
-
-# Run Methods
+# Run Fine-Mapping Methods
 ## SuSiEx
 ### Prep Input
-SuSiEx is a command-line python program. It expects the following: \
-A summary stats file, with at least chromosome, position, ID, effect and alternate allele, <TODO> \
-
-The β column must be named "BETA" (a bit annoying).
+SuSiEx is a command-line python program. It expects the following:\
+A summary stats file, as follows:\ 
+TODO: make nice table\
+The β column _must_ be named "BETA" or "OR", but besides that they may be named arbitrarily.
 ```{r}
 mapply(sumstats, ancestries, FUN=function(ss,anc) {
+  ss <- ss[, .(chr,pos,rsid,a0,a1,b,se,p)]
   setnames(ss, old="b", new="BETA", skip_absent=T)
   fwrite(ss, paste0("in/susiex/sumstat-",anc,".txt"), sep=' ')
-  setnames(ss, old="BETA", new="b", skip_absent=T)
 })
 ```
 
@@ -152,9 +154,69 @@ mapply(sumstats, ancestries, FUN=function(ss,anc) {
 
 ### Run SuSiEx
 ```{r}
-paste(collapse=',', paste0(sapply(data_configs, function(d) d$n)))
-paste(collapse=',', paste0(
-system(paste0("python3 ../third_party/SuSiEx/SuSiEx.py \\",
-              "--sst_file=", paste(collapse=',', paste0("in/susiex/sumstat-",ancestries,".txt")),
-              "--n_gwas=",   paste(collapse=',', sapply(data_configs, function(d) d$n))
+system(paste("python3 ../third_party/SuSiEx/SuSiEx.py",
+             "--sst_file", paste(collapse=',', paste0("in/susiex/sumstat-",ancestries,".txt")),
+             "--n_gwas",   paste(collapse=',', data_configs$n),
+             "--ld_file",  paste(collapse=',', paste0("in/ld/",ancestries,"-susiex" )),
+             "--ref_file ../data/ref/1kg/plink_format/eas/g1000_eas,../data/ref/1kg/plink_format/eur/g1000_eur,../data/ref/1kg/plink_format/sas/g1000_sas", # TODO:
+             "--plink plink", # TODO:
+             "--out_dir out/susiex/",
+             "--out_name", lnm, # TODO:
+             "--chr ", lchr,
+             "--bp ", paste(sep=',', pos_min,pos_max),
+             "--chr_col", paste(collapse=',', rep(1,nrow(data_configs))),
+             "--bp_col",  paste(collapse=',', rep(2,nrow(data_configs))),
+             "--snp_col", paste(collapse=',', rep(3,nrow(data_configs))),
+             "--a1_col",  paste(collapse=',', rep(4,nrow(data_configs))),
+             "--a2_col",  paste(collapse=',', rep(5,nrow(data_configs))),
+             "--eff_col", paste(collapse=',', rep(6,nrow(data_configs))),
+             "--se_col",  paste(collapse=',', rep(7,nrow(data_configs))),
+             "--pval_col",paste(collapse=',', rep(8,nrow(data_configs))),
+             "--maf 0.005", 
+             "--mult-step True",
+             "--keep-ambig True",
+             "--full_out True"
+             # defaults: --max_iter=100, --pval_thresh=1e-5, --tol=1e-4, --n_sig=5, --level=95%, --min_purity=0.5
+))
+```
+
+## PAINTOR
+### Prep Input
+TODO: desc
+```{r}
+# input.files
+writeLines(locus_configs$locus, "in/paintor/input.files")
+
+# LD
+# Unfortunately PAINTOR insists on having all its input files in a single dir, so that means either cluttering in/ld/ or making copies of the LD....
+# TODO: write this earlier so don't have to hang onto in mem? Although it is just one per anc in the ref.
+mapply(lds, ancestries, FUN = function(ld, a)
+  fwrite(ld, paste0("in/paintor/",locus_configs$locus,".ld_",a), sep=' ', col.names=F)
+) 
+
+# Locus file
+# TODO: naming business could be cleaner probably
+sapply(locus_configs$locus, function(l) {
+  lf <- setDT(lapply(sumstats, function(ss) ss$z))
+  setnames(lf, paste0("z_",names(lf)))
+  lf <- cbind(sumstats[[1]][rsid %in% common_rsids, .(rsid,chr,pos)], lf) # Can add more metadata than just rsid,chr,pos if you want
+  fwrite(lf, paste0("in/paintor/",l), sep=' ')
+})
+
+# Annotation file
+# TODO: dummy all-0s file for now
+writeLines(c("dummy_annot", rep(0,nrow(sumstats[[1]]))), paste0("in/paintor/",locus_configs$locus,".annotations"))
+```
+
+### Run PAINTOR
+```{r}
+system(paste("../third_party/PAINTOR_V3.0/PAINTOR",
+             "-input in/paintor/input.files",
+             "-in in/paintor/",
+             "-out out/paintor/",
+             "-Zhead",  paste(collapse=',', paste0("z_",names(sumstats))),
+             "-LDname", paste(collapse=',', paste0("ld_",data_configs$ancestry)),
+             "-annotations dummy_annot",
+             "-enumerate 1"
+))
 ```
