@@ -1,0 +1,82 @@
+---
+execute:
+  echo: true
+server: shiny
+format: html
+---
+
+# Lib
+```{r}
+#| context: setup
+library(data.table)
+library(shiny)
+```
+# Config
+```{r}
+#| context: setup
+locus_configs <- fread("locus.config")
+```
+
+# Load Results
+TODO code not pretty\
+
+## PAINTOR
+```{r}
+#| context: setup
+credset_files <- paste0("out/paintor/", list.files("out/paintor/", pattern=".results"))
+paintor_results <- lapply(credset_files, fread,
+  select = c("rsid","chr","pos","Posterior_Prob"),
+  col.names = c("rsid","chr","pos",      "pip"     ))
+names(paintor_results) <- sub("out/paintor/(.*).results", "\\1", credset_files)
+paintor_results <- paintor_results[names(paintor_results) != "LogFile"]
+```
+## SuSiEx
+```{r}
+#| context: setup
+credset_files <- paste0("out/susiex/", list.files("out/susiex/", pattern=".cs")) 
+susiex_results <- lapply(credset_files, fread,
+     select = c("SNP",  "BP","CS_PIP"),
+  col.names = c("rsid","pos", "pip"  ))
+names(susiex_results) <- sub("out/susiex/(.*).cs", "\\1", credset_files)
+```
+---
+---
+```{r}
+#| context: data 
+all_results <- list(SuSiEx=susiex_results, PAINTOR=paintor_results)
+common_vs <- Reduce(intersect, lapply(all_results, function(x) x[[1]]$rsid))
+all_results <- lapply(all_results, function(method_results) {
+               lapply(method_results, function(x) { x <- x[rsid %in% common_vs]
+                                                    x <- x[    order(rsid)    ] })})
+plot(c(1,2,3),c(2,4,6))
+```
+
+# Explore
+```{r}
+selectInput(inputId = "locus",
+            label = strong("Locus"),
+            choices = locus_configs$locus)
+
+radioButtons(inputId = "method1",
+             choices = c("SuSiEx", "PAINTOR"),
+             label = strong("Methods to compare"), inline=T)
+radioButtons(inputId = "method2",
+             choices = c("SuSiEx", "PAINTOR"),
+             label = NULL, inline=T)
+
+plotOutput("pip_compare")
+```
+```{r}
+#| context: server
+selected_data_1 <- reactive({ all_results[[input$method1]][[input$locus]] })
+selected_data_2 <- reactive({ all_results[[input$method2]][[input$locus]] })
+m1 <- reactive({ input$method1 })
+m2 <- reactive({ input$method2 })
+
+output$pip_compare <- renderPlot({
+  plot(x = c(1,2,3),#selected_data_1()$pip,
+       y = c(2,4,6))#selected_data_2()$pip)
+       #xlab = m1(), 
+       #ylab = m2())
+})
+```

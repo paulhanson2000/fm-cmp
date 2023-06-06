@@ -1,0 +1,86 @@
+---
+format: html
+---
+
+# Lib
+```{r}
+library(data.table)
+library(quarto)
+```
+
+# Load Results
+## PAINTOR
+```{r}
+credset_files <- paste0("out/paintor/", list.files("out/paintor/", pattern=".results"))
+credset_files <- credset_files[!grepl("LogFile", credset_files)]
+paintor_results <- lapply(credset_files, fread, select=c("rsid", "Posterior_Prob"),
+                                             col.names=c("rsid",       "pip"     ))
+names(paintor_results) <- sub("out/paintor/(.*).results", "\\1", credset_files)
+```
+## SuSiEx
+```{r}
+credset_files <- paste0("out/susiex/", list.files("out/susiex/", pattern=".cs")) 
+susiex_results <- lapply(credset_files, fread, select=c("SNP", "CS_PIP"),
+                                            col.names=c("rsid", "pip"  ))
+names(susiex_results) <- sub("out/susiex/(.*).cs", "\\1", credset_files)
+```
+
+# Prep Results for JS
+```{r}
+common_rsids_per_locus <- mapply(paintor_results, susiex_results, SIMPLIFY=F,
+  FUN = function(p,s) {
+    common_rsids <- Reduce(intersect, list(p$rsid, s$rsid))
+})
+
+paintor_results <- mapply(paintor_results, common_rsids_per_locus, SIMPLIFY=F,
+  FUN = function(p,vs) {
+    p <- p[rsid %in% vs]
+    p <- p[order(rsid) ]
+})
+susiex_results <- mapply(susiex_results, common_rsids_per_locus, SIMPLIFY=F,
+  FUN = function(s,vs) {
+    s <- s[rsid %in% vs]
+    s <- s[order(rsid) ]
+})
+
+# Check all rsids in same order for every locus
+all(mapply(paintor_results, susiex_results, FUN = function(p,s) {
+  all(sapply(list(p$rsid,s$rsid), identical, p$rsid))
+}))
+
+paintor_pips <- lapply(paintor_results, '[', j=pip)
+susiex_pips  <- lapply(susiex_results,  '[', j=pip)
+
+ojs_define(paintor_pips = paintor_pips,
+           susiex_pips= susiex_pips)
+```
+
+# OJS
+```{ojs}
+method_results = ({
+  PAINTOR: paintor_pips,
+  SuSiEx: susiex_pips
+})
+
+viewof method1 = Inputs.radio(["PAINTOR", "SuSiEx"], {label: "Method 1", value: "PAINTOR"})
+viewof method2 = Inputs.radio(["PAINTOR", "SuSiEx"], {label: "Method 2", value: "SuSiEx"})
+viewof locus = Inputs.select(Object.keys(paintor_pips), {label:"Locus"})
+
+plot_data = [
+  method_results[method1][locus],
+  method_results[method2][locus]
+]
+
+//Plot.dot(transpose(plot_data), {x: "0", y: "1"}).plot()
+Plot.plot({
+  grid: true,
+  x: {label: method1.concat(" PIPs")},
+  y: {label: method2.concat(" PIPs")},
+  marks: [
+    Plot.dot(transpose(plot_data), {
+      x: (d) => d[0],
+      y: (d) => d[1]
+    })
+  ]
+})
+```
