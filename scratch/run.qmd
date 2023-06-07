@@ -1,8 +1,6 @@
 ---
-title: title
-toc: true
-engine: knitr
 format: html
+toc: true
 ---
 
 # Lib
@@ -12,32 +10,34 @@ library(data.table)
 library(SeqArray)
 library(SNPRelate)
 ```
+```{r}
+#| include: false
+"%ni%" <- Negate("%in%")
+```
 
 # Data
 ```{r}
 data_configs <- fread("data.config")
-locus_configs <- fread("locus.config")
-
-# TODO: Temporarily just one locus at a time for now. Or just keep it this way but run the script multiple times? __No__, because then would be loading the data multiple times.
-  # But what about needlessly holding all those LD mats in mem? Maybe a middleground that only loads the initial data once, and also doesn't require holding the LDs @ once for all loci in mem before even getting to the methods.
-  # Or maybe n/ of this matters b/c all the LD has to be written to file a/w so might as well rm() the object right after.
-lnm <- locus_configs$locus
-lchr <- locus_configs$chr
-pos_min <- locus_configs$pos_min
-pos_max <- locus_configs$pos_max
+loci_configs <- fread("locus.config") # REMINDER TO SELF: you're designing it this way instead of just running the script multiple times for each locus b/c then would be loading data multiple times.
 ```
 ## Summary stats
 ```{r}
 #| output: false
+# TODO: Read only the parts of sumstats that are needed. I.e. Read only within the chr and pos ranges, AND eaf, compute from that what rows are necessary to read, and only read those. Small memory+timesave but as I only have 3 small-ish datasets for now, focus on optimizations elsewhere.
+  # Alternatively use cmd="awk <stuff>", but that would hurt Windows compatability.
+  # NOTE TO SELF: peace of mind: this optimization will require no rewriting of the downstream code after it's implemented, because seqSetFilterChrom() and rsids %in% later takes care of it.
+    # If you added that extra line filtering out EAF == 0, then yeah that one line could be removed after this optim is done though. BUT actually, keep it for clarity, even if it's repeated.
 sumstats <- lapply(1:nrow(data_configs), function(r) {
   sumstat          <-       data_configs[r, fread(filepath, select=c(chr_col, pos_col, rsid_col, other_allele_col, effect_allele_col, eaf_col, b_col, se_col, z_col, p_col))]
   unspecified_cols <- is.na(data_configs[r,                        .(chr_col, pos_col, rsid_col, other_allele_col, effect_allele_col, eaf_col, b_col, se_col, z_col, p_col)])
   setnames(sumstat,                                               c("chr",   "pos",   "rsid",   "a0",             "a1",              "eaf",   "b",   "se",   "z",   "p"   )[!unspecified_cols])
+  # TODO: remove rows with un-ignorable NAs in via complete.cases. Be verbse about what is rm'd.
   sumstat[, `:=`(a0=toupper(a0), a1=toupper(a1))]
   if(data_configs[r, is.na(z_col) & !is.na(b_col) & !is.na(se_col)]) sumstat[, z := b/se]
-  # TODO: s/t s/t complete.cases or w/e to deal w/ remaining NAs, and be verbose about what is removed.
+  # TODO: s/t s/t complete.cases or w/e to deal w/ remaining NAs, stop if one of the datasets is invalid, b/c surely the user wouldn't want it to run a/w, and it would help the code be cleaner if I could assume all datasets are valid.
+  # TODO: Ano/ thing to check is that a dataset's ancestry exists in the reference panel.
 })
-names(sumstats) <- paste0("sumstat", 1:length(sumstats))
+names(sumstats) <- basename(data_configs$filepath)
 ```
 ## Reference panel
 ```{r}
@@ -50,87 +50,163 @@ sample_info <- fread("../data/ref/1kg/sample_info/integrated_call_samples_v3.201
 identical(seqGetData(ref,"sample.id"), sample_info$sample)
 seqAddValue(ref, "sample.annotation/ancestry", sample_info$super_pop, replace=T)
 seqAddValue(ref, "sample.annotation/gender", sample_info$gender, replace=T)
+rm(sample_info)
 ```
 
-# Subset
+# Prep
+## Filter
+First, filter out useless/unusable variants from the summary stats: \
+1. If variant's EAF is 0 
+2. If variant's ancestry-specific MAF is 0 for that sumstat file's ancestry
+3. If variant is not within the bounds of any loci specified in `locus.config`
+4. If variant not also present in reference panel
 ```{r}
 #| output: false
-# TODO: tapply could be more readable/elegant than this "samples_of_each_ancestry" stuff?
-  # s/t s/t tapply(seqGetData(ref,"sample.id"), INDEX=factor(seqGetData(ref, "sample.annotation/ancestry"))
+seqSetFilterChrom(ref, loci_configs$chr,
+               from.bp=loci_configs$pos_min,
+                 to.bp=loci_configs$pos_max)
 
-# TODO: mJAM can handle NAs! So, take advantage of that and don't just subset for all methods...
-  # I think this is actually pretty easy, just save the subset by common_rsids for later,
-  # And calc LD for the unique(union(lapply(sumstats, function(s) s$rsid
+samples_of_each_ancestry <- tapply(seqGetData(ref,"sample.id"), INDEX=seqGetData(ref,"sample.annotation/ancestry"), FUN = identity) 
+ancestry_MAFs <- lapply(samples_of_each_ancestry, function(samples_of_an_ancestry) {
+    seqSetFilter(ref, sample.id = samples_of_an_ancestry)
+    seqAlleleFreq(ref, minor=T)
+}) 
+seqResetFilter(ref, variant=F)
 
-# TODO: Only 1 locus at a time for now. How to write elegantly for multiple? (Probably) Not nested lapply's and "sumstatss".
-  # outer lapply by locus kinda bulky and loading all that into memory hurts.
-  # Perhaps, wrap this all into a function, to run once per locus, and then loop over that.
+invisible(sapply(data_configs$ancestry, function(anc) if(anc %ni% names(ancestry_MAFs)) { print(paste("ERROR: Ancestry",anc,"mentioned in data.config is not an ancestry in the reference panel:", paste(collapse=", ", names(ancestry_AFs)), "\nPlease remove this dataset from data.config, or if this was just a typo, change the ancestry name to match one of those in the reference panel.")); stop() })) # TODO: this belongs earlier, when loading in the data. But a nice sanity check to have for now.
 
-# Filter by valid/desired variants in sumstats
-sumstats <- lapply(sumstats, function(ss) ss[ chr ==  lchr  &
-                                              pos > pos_min &
-                                              pos < pos_max &
-                                              eaf >    0    &
-                                              eaf <    1      ])
-
-# Filter ref by variants common to all sumstats files
-rsids <- lapply(sumstats, function(ss) ss$rsid)
-common_rsids <- Reduce(intersect, rsids)
-seqSetFilterAnnotID(ref, common_rsids)
-
-# Filter ref by variants where MAF > 0 for ~every~ ancestry
-ancestries <- unique(data_configs$ancestry)
-names(ancestries) <- ancestries # TODO: ocd, technically not necessary, only helps readability in dev but not final product, bothering me a little
-
-samples_of_each_ancestry <- lapply(ancestries, function(a) {
-  seqResetFilter(ref, variant=F)
-  samples_of_this_ancestry <- seqGetData(ref,"sample.annotation/ancestry") == a
-  seqSetFilter(ref, sample.sel = samples_of_this_ancestry)
-  seqGetData(ref, "sample.id")
+# For each sumstat, keep only variants with MAF > 0 for the sumstat's ancestry.
+# Reference panel used to calculate MAF.
+# As a byproduct, also filters sumstats by variants shared with the reference.
+sumstats <- mapply(sumstats, data_configs$ancestry, SIMPLIFY=F,
+  FUN = function(ss, anc) {
+    ancestry_MAF <- ancestry_MAFs[[anc]]
+    seqSetFilter(ref, action = "push+intersect", variant.sel = ancestry_MAF>0)
+    ss <- ss[rsid %in% seqGetData(ref,"annotation/id")]
+    #print(sapply(seetFilter(ref),sum))
+    seqFilterPop(ref)
+    #print(sapply(seqGetFilter(ref),sum))
+    ss
 })
 
-ancestry_AFs <- lapply(samples_of_each_ancestry, function(samples_of_an_ancestry) {
-  seqResetFilter(ref, variant=F)
-  seqSetFilter(ref, sample.id = samples_of_an_ancestry)
-  seqAlleleFreq(ref, ref.allele=1) # TODO: Not ~quite~ correct b/c only the first allele of multi-allelic variants get considered
-})
-ancestry_AFs <- as.data.table(ancestry_AFs) # variant rows, ancestry cols
+# TODO: This is not generalizable to sumstats where user gives no EAF column.
+  # Also just filter by EAF during data loading. But this may be good to keep for explicitness as it surely has negligible performance cost at this point after filtering
+sumstats <- lapply(sumstats, '[', eaf>0 & eaf<1)
 
-valid_vs_in_ref <- apply(ancestry_AFs, 1, function(v_afs) all(v_afs>0 & v_afs<1))
-seqSetFilter(ref, variant.sel=valid_vs_in_ref, action="intersect")
+# Sort by rsid.
+# Note that after subsetting, things will remain sorted (useful fact).
+sumstats <- lapply(sumstats, '[', order(rsid))
+```
 
-# Filter by variants common to all sumstats AND ref
-common_rsids <- intersect(common_rsids, seqGetData(ref,"annotation/id"))
-sumstats <- lapply(sumstats, function(ss) ss[rsid %in% common_rsids])
-sumstats <- lapply(sumstats, function(ss) ss[      order(rsid)     ]) # Put all sumstats same order, by rs id.
+## Subset
+Split the summary stats into sets of subsets, one per locus.
+```{r}
+subset_sumstatss <- lapply(1:nrow(loci_configs), function(r) {
+                    lapply(         sumstats,    function(ss) {
+
+  ss[chr == loci_configs[r,chr]     &
+     pos >  loci_configs[r,pos_min] &
+     pos <  loci_configs[r,pos_max] ]
+})})
+names(subset_sumstatss) <- loci_configs$locus
 ```
 
 # LD
+Calculate LD per ancestry per locus.\
+This is more space-efficient than calculating LD per dataset per locus, assuming the datasets have most of their variants in common (which they should!—or else what is the point of multi-dataset finemapping?).
 ```{r}
+## TODO: remem can't have ld_calc take pos,chr, must be rsids, b/c GDS file can't be subset only filtered so no bad variants were ever deleted.
+## Also remem to order the LD. BTW you can sort(rsid) before subsetting and it'll still be in order after subsetting.
+
+# THEN, once we don't have to worry if any rsids are invalid, simply subset sumstats based on lchr,pos_min,pos_max for each locus.config locus.
+# AND equally as simply, calculate LD matrix by simply specifying chr and pos... oh wait no, b/c GDS file don't delete when subset, only temporary filter....
+
+# in my current code, I didn't have to worry about subsetting rsids before calc LD, b/c the seqSetFilterAnnotID was constant throughout the whole script.
+
+# Then use those perfect rsids when calculating LD just after.
+# Just hold all the subset sumstats_s_ in memory together I guess. Hey, if they could load their original un-subset sumstats in mem then they can do this no prob.
+  # Oh, generating subsets of sumstats and holding them all in memory? Or just holding the rsids necessary to subset each sumstat _later on_?
+
 # TODO: calc_ld.R was in fact inelegant, bad. Instead, have the fn take a gds pointer assuming the filters you want are already applied.
   # Also my function is bad b/c it has the side-effect of closing the file.
   # Just embrace the GDS fully, expect the user to use a GDS file as input, and rewrite the fn to expect a pointer to a GDS file.
 # TODO: Alternatively: calc_ld <- function <"FUN = stuff", but also w/ locus>; Vectorize(calc_ld, vectorize.args=c("sumstat","samples")); Vectorize(calc_ldv, vectorize.args=c("locus"). Also SIMPLIFY=F. May be more readable?
   # B/c then can just do calc_ld(sumstats, samples_of_each_ancestry, loci)
-lds <- mapply(samples_of_each_ancestry, sumstats, SIMPLIFY=F,
-FUN = function(samples_of_an_ancestry,  sumstat) {
-  seqSetFilter(ref, sample.id = samples_of_an_ancestry)
+
+# ADD: one line, seqSetFilterAnnotID(). Need to do this per locus now that have multiple loci.
+  # Just this one line before the mapply. And just after being wrapped into a fn, I guess.
+
+
+# Loop over loci, loop over subset_sumstat[[l]].
+# For each of those, get ancestry from data_config, set appropriate GDS ancestry filter
+# And set appropriate rsid filter based on what is in subset_sumstat[[l]][[current]].        (cannot be chr+pos filter b/c not all sumstat rsids are in the ref)
+# Set the AnnotID filter first, and then push/pop for each ancestry filter.                  (doesn't (and shouldn't) matter that we still have the seqSetFilterChrom from before)
+# GDS2SNP -> alleleSwitch -> LDMat -> write 
+
+
+
+# Signed Pearson correlation.
+# Returned LD matrix's rows/cols are sorted to match the order of the given rs_ids.
+# Filters on the GDS file ~are~ taken into account. The GDS file will be returned with the same filters as before.
+ld_calc <- function(gds_file, rs_ids, sample_ids=NULL, ref_alleles=NULL, outfile_name=NULL) {
+  if(is.null(ref_alleles)) warning("calc_ld() warning: specifying your data's ref_alleles is highly recommended! If the reference alleles (i.e. non-effect alleles) in your data =/= those in the reference panel, the LD will be incorrect.")
+  seqFilterPush(gds_file) # Save user prexisting filter on the file if they have one
+
+  seqSetFilterAnnotID(gds_file, rs_ids)
+  if(!is.null(sample_ids)) seqSetFilter(gds_file, sample.id = sample_ids)
+
   tmp_filename <- "/tmp/snpgds_format_file.gds"
-  seqGDS2SNP(ref, tmp_filename, compress.geno="", compress.annotation="")
+  seqGDS2SNP(gds_file, tmp_filename, compress.geno="", compress.annotation="")
   tmp <- snpgdsOpen(tmp_filename, readonly=F)
-  snpgdsAlleleSwitch(tmp, toupper(sumstat$a0))
+  snpgdsAlleleSwitch(tmp, toupper(ref_alleles))
   ld <- snpgdsLDMat(tmp, slide=0, method="corr", num.thread=parallel::detectCores())$LD
 
-  snpgdsClose(tmp)
-  unlink(tmp_filename)
+  snpgdsClose(tmp) # Don't need SNP GDS format file anymore
+  unlink(tmpfile_name)
 
-  # Sort LD matrix to match order of rs IDs in sumstats
-  snv_order <- match(seqGetData(ref, "annotation/id"), sumstat$rsid)
-  ld[snv_order,snv_order]
-})
+  # Sort LD matrix to match the order of the user-given rs_ids.
+  rs_ids_order <- match(rs_ids, seqGetdata(reg_gds,"annotation/id"))
+  ld <- ld[rs_ids_order, rs_ids_order]
 
-mapply(lds, ancestries, FUN = function(ld, a) fwrite(ld, paste0("in/ld/",a,".ld"), sep=' '))
+  if(!is.null(outfile_name)) fwrite(ld, outfile_name, sep=' ', col.names=F)
+
+  seqFilterPop(gds_file) # Set filter to however it was before
+  ld
+}
+# Note: it doesn't (and shouldn't!) matter that the seqSetFilterChrom filter from before is still active.
+
+lapply(       loci_configs$locus,     function(l) {
+lapply(unique(data_configs$ancestry), function(anc) {
+   samples_of_an_ancestry <- samples_of_each_ancestry[[anc]]
+  sumstats_of_an_ancestry <- subset_sumstatss[[l]][which(data_configs$ancestry == anc)]
+  common_rsids_in_sumstats_of_an_ancestry <- Reduce(union, lapply(sumstats_of_an_ancestry, '[', j=rsid))
+
+  # TODO: ughhh this is not generalizable b/c what if the different datasets have different effect alleles....
+    # For now I can assume they're consistent b/c there's only one dataset per ancestry.
+    # Simplest solution I can think of: do a little extra preproc just after reading the data. Flip a0<->a1 to be consistent and flip the β (And z. And SE?) appropriately.
+  ld_calc(ref, rs_ids = common_rsids_in_sumstats_of_an_ancestry,
+           sample_ids = samples_of_an_ancestry,
+          ref_alleles = sumstats_of_an_ancestry[[1]]$a0,
+         outfile_name = paste0("in/ld/",l,"-",a,".ld")         ) 
+
+  return(NULL) # Remove this to have the ld be returned, but that's a lotta memory and I won't need it for the rest of this script.
+})})
 ```
+
+
+
+```{r}
+# Filter ref by variants common to all sumstats files
+rsids <- lapply(sumstats, function(ss) ss$rsid)
+common_rsids <- Reduce(intersect, rsids)
+seqSetFilterAnnotID(ref, common_rsids)
+
+# Filter by variants common to all sumstats AND ref
+common_rsids <- intersect(common_rsids, seqGetData(ref,"annotation/id"))
+sumstats <- lapply(sumstats, function(ss) ss[rsid %in% common_rsids])
+```
+
+
 
 # Run Fine-Mapping Methods
 ## SuSiEx
@@ -185,18 +261,18 @@ system(paste("python3 ../third_party/SuSiEx/SuSiEx.py",
 TODO: desc
 ```{r}
 # input.files
-writeLines(locus_configs$locus, "in/paintor/input.files")
+writeLines(loci_configs$locus, "in/paintor/input.files")
 
 # LD
 # Unfortunately PAINTOR insists on having all its input files in a single dir, so that means either cluttering in/ld/ or making copies of the LD....
 # TODO: write this earlier so don't have to hang onto in mem? Although it is just one per anc in the ref.
 mapply(lds, ancestries, FUN = function(ld, a)
-  fwrite(ld, paste0("in/paintor/",locus_configs$locus,".ld_",a), sep=' ', col.names=F)
+  fwrite(ld, paste0("in/paintor/",loci_configs$locus,".ld_",a), sep=' ', col.names=F)
 ) 
 
 # Locus file
 # TODO: naming business could be cleaner probably
-sapply(locus_configs$locus, function(l) {
+sapply(loci_configs$locus, function(l) {
   lf <- setDT(lapply(sumstats, function(ss) ss$z))
   setnames(lf, paste0("z_",names(lf)))
   lf <- cbind(sumstats[[1]][rsid %in% common_rsids, .(rsid,chr,pos)], lf) # Can add more metadata than just rsid,chr,pos if you want
@@ -205,7 +281,7 @@ sapply(locus_configs$locus, function(l) {
 
 # Annotation file
 # TODO: dummy all-0s file for now
-writeLines(c("dummy_annot", rep(0,nrow(sumstats[[1]]))), paste0("in/paintor/",locus_configs$locus,".annotations"))
+writeLines(c("dummy_annot", rep(0,nrow(sumstats[[1]]))), paste0("in/paintor/",loci_configs$locus,".annotations"))
 ```
 
 ### Run PAINTOR
