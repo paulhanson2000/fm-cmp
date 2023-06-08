@@ -79,34 +79,31 @@ invisible(sapply(data_configs$ancestry, function(anc) if(anc %ni% names(ancestry
 # Reference panel used to calculate MAF.
 # As a byproduct, also filters sumstats by variants shared with the reference.
 sumstats <- mapply(sumstats, data_configs$ancestry, SIMPLIFY=F,
-  FUN = function(ss, anc) {
+  FUN = function(s, anc) {
     ancestry_MAF <- ancestry_MAFs[[anc]]
     seqSetFilter(ref, action = "push+intersect", variant.sel = ancestry_MAF>0)
-    ss <- ss[rsid %in% seqGetData(ref,"annotation/id")]
+    s <- s[rsid %in% seqGetData(ref,"annotation/id")]
     #print(sapply(seetFilter(ref),sum))
     seqFilterPop(ref)
     #print(sapply(seqGetFilter(ref),sum))
-    ss
+    s
 })
 
-# TODO: This is not generalizable to sumstats where user gives no EAF column.
+# TODO: Not generalizable to sumstats where user gives no EAF column.
   # Also just filter by EAF during data loading. But this may be good to keep for explicitness as it surely has negligible performance cost at this point after filtering
 sumstats <- lapply(sumstats, '[', eaf>0 & eaf<1)
-
-# Sort by rsid.
-# Note that after subsetting, things will remain sorted (useful fact).
-sumstats <- lapply(sumstats, '[', order(rsid))
+sumstats <- lapply(sumstats, '[', order(rsid)) # Note that after subsetting, things will remain sorted (useful fact).
 ```
 
 ## Subset
 Split the summary stats into sets of subsets, one per locus.
 ```{r}
 subset_sumstatss <- lapply(1:nrow(loci_configs), function(r) {
-                    lapply(         sumstats,    function(ss) {
+                    lapply(         sumstats,    function(s) {
 
-  ss[chr == loci_configs[r,chr]     &
-     pos >  loci_configs[r,pos_min] &
-     pos <  loci_configs[r,pos_max] ]
+  s[chr == loci_configs[r,chr]     &
+    pos >  loci_configs[r,pos_min] &
+    pos <  loci_configs[r,pos_max] ]
 })})
 names(subset_sumstatss) <- loci_configs$locus
 ```
@@ -115,35 +112,8 @@ names(subset_sumstatss) <- loci_configs$locus
 Calculate LD per ancestry per locus.\
 This is more space-efficient than calculating LD per dataset per locus, assuming the datasets have most of their variants in common (which they should!—or else what is the point of multi-dataset finemapping?).
 ```{r}
-## TODO: remem can't have ld_calc take pos,chr, must be rsids, b/c GDS file can't be subset only filtered so no bad variants were ever deleted.
-## Also remem to order the LD. BTW you can sort(rsid) before subsetting and it'll still be in order after subsetting.
-
-# THEN, once we don't have to worry if any rsids are invalid, simply subset sumstats based on lchr,pos_min,pos_max for each locus.config locus.
-# AND equally as simply, calculate LD matrix by simply specifying chr and pos... oh wait no, b/c GDS file don't delete when subset, only temporary filter....
-
-# in my current code, I didn't have to worry about subsetting rsids before calc LD, b/c the seqSetFilterAnnotID was constant throughout the whole script.
-
-# Then use those perfect rsids when calculating LD just after.
-# Just hold all the subset sumstats_s_ in memory together I guess. Hey, if they could load their original un-subset sumstats in mem then they can do this no prob.
-  # Oh, generating subsets of sumstats and holding them all in memory? Or just holding the rsids necessary to subset each sumstat _later on_?
-
-# TODO: calc_ld.R was in fact inelegant, bad. Instead, have the fn take a gds pointer assuming the filters you want are already applied.
-  # Also my function is bad b/c it has the side-effect of closing the file.
-  # Just embrace the GDS fully, expect the user to use a GDS file as input, and rewrite the fn to expect a pointer to a GDS file.
-# TODO: Alternatively: calc_ld <- function <"FUN = stuff", but also w/ locus>; Vectorize(calc_ld, vectorize.args=c("sumstat","samples")); Vectorize(calc_ldv, vectorize.args=c("locus"). Also SIMPLIFY=F. May be more readable?
-  # B/c then can just do calc_ld(sumstats, samples_of_each_ancestry, loci)
-
-# ADD: one line, seqSetFilterAnnotID(). Need to do this per locus now that have multiple loci.
-  # Just this one line before the mapply. And just after being wrapped into a fn, I guess.
-
-
-# Loop over loci, loop over subset_sumstat[[l]].
-# For each of those, get ancestry from data_config, set appropriate GDS ancestry filter
-# And set appropriate rsid filter based on what is in subset_sumstat[[l]][[current]].        (cannot be chr+pos filter b/c not all sumstat rsids are in the ref)
-# Set the AnnotID filter first, and then push/pop for each ancestry filter.                  (doesn't (and shouldn't) matter that we still have the seqSetFilterChrom from before)
-# GDS2SNP -> alleleSwitch -> LDMat -> write 
-
-
+# TODO: consider: generating subsets of sumstats and holding them all in memory? Or just holding the rsids necessary to subset each sumstat _later on_?
+  # Could actualy be more concise to have just the rsids and subset as I go.
 
 # Signed Pearson correlation.
 # Returned LD matrix's rows/cols are sorted to match the order of the given rs_ids.
@@ -162,51 +132,38 @@ ld_calc <- function(gds_file, rs_ids, sample_ids=NULL, ref_alleles=NULL, outfile
   ld <- snpgdsLDMat(tmp, slide=0, method="corr", num.thread=parallel::detectCores())$LD
 
   snpgdsClose(tmp) # Don't need SNP GDS format file anymore
-  unlink(tmpfile_name)
+  unlink(tmp_filename)
 
   # Sort LD matrix to match the order of the user-given rs_ids.
-  rs_ids_order <- match(rs_ids, seqGetdata(reg_gds,"annotation/id"))
+  rs_ids_order <- match(seqGetData(gds_file,"annotation/id"), rs_ids)
   ld <- ld[rs_ids_order, rs_ids_order]
 
-  if(!is.null(outfile_name)) fwrite(ld, outfile_name, sep=' ', col.names=F)
+  if(!is.null(outfile_name)) fwrite(ld, outfile_name, sep=' ', col.names=F, compress="gzip")
 
   seqFilterPop(gds_file) # Set filter to however it was before
   ld
 }
 # Note: it doesn't (and shouldn't!) matter that the seqSetFilterChrom filter from before is still active.
 
-lapply(       loci_configs$locus,     function(l) {
-lapply(unique(data_configs$ancestry), function(anc) {
-   samples_of_an_ancestry <- samples_of_each_ancestry[[anc]]
-  sumstats_of_an_ancestry <- subset_sumstatss[[l]][which(data_configs$ancestry == anc)]
-  common_rsids_in_sumstats_of_an_ancestry <- Reduce(union, lapply(sumstats_of_an_ancestry, '[', j=rsid))
-
-  # TODO: ughhh this is not generalizable b/c what if the different datasets have different effect alleles....
-    # For now I can assume they're consistent b/c there's only one dataset per ancestry.
-    # Simplest solution I can think of: do a little extra preproc just after reading the data. Flip a0<->a1 to be consistent and flip the β (And z. And SE?) appropriately.
-  ld_calc(ref, rs_ids = common_rsids_in_sumstats_of_an_ancestry,
-           sample_ids = samples_of_an_ancestry,
-          ref_alleles = sumstats_of_an_ancestry[[1]]$a0,
-         outfile_name = paste0("in/ld/",l,"-",a,".ld")         ) 
-
-  return(NULL) # Remove this to have the ld be returned, but that's a lotta memory and I won't need it for the rest of this script.
+ld_rsid_orders <-
+  lapply(       loci_configs$locus,     function(l) {
+  lapply(unique(data_configs$ancestry), function(anc) {
+    samples_of_an_ancestry <- samples_of_each_ancestry[[anc]]
+    sumstats_of_an_ancestry <- subset_sumstatss[[l]][which(data_configs$ancestry == anc)]
+    common_rsids_in_sumstats_of_an_ancestry <- Reduce(union, lapply(sumstats_of_an_ancestry, '[', j=rsid))
+  
+    # TODO: ughhh this is not generalizable b/c what if the different datasets have different effect alleles....
+      # For now I can assume they're consistent b/c there's only one dataset per ancestry.
+      # Simplest solution I can think of: do a little extra preproc just after reading the data. Flip a0<->a1 to be consistent and flip the β (And z. And SE?) appropriately.
+    ld_calc(ref, rs_ids = common_rsids_in_sumstats_of_an_ancestry,
+             sample_ids = samples_of_an_ancestry,
+            ref_alleles = sumstats_of_an_ancestry[[1]]$a0,
+           outfile_name = paste0("in/ld/",l,"-",anc,".ld.gz")       ) 
+  
+    common_rsids_in_sumstats_of_an_ancestry # Return the order of the LD mat's rows/cols, importnant! # TODO: write to file so no need recompute
 })})
+names(ld_rsid_orders) <- loci_configs$locus
 ```
-
-
-
-```{r}
-# Filter ref by variants common to all sumstats files
-rsids <- lapply(sumstats, function(ss) ss$rsid)
-common_rsids <- Reduce(intersect, rsids)
-seqSetFilterAnnotID(ref, common_rsids)
-
-# Filter by variants common to all sumstats AND ref
-common_rsids <- intersect(common_rsids, seqGetData(ref,"annotation/id"))
-sumstats <- lapply(sumstats, function(ss) ss[rsid %in% common_rsids])
-```
-
-
 
 # Run Fine-Mapping Methods
 ## SuSiEx
@@ -216,11 +173,13 @@ A summary stats file, as follows:\
 TODO: make nice table\
 The β column _must_ be named "BETA" or "OR", but besides that they may be named arbitrarily.
 ```{r}
-mapply(sumstats, ancestries, FUN=function(ss,anc) {
-  ss <- ss[, .(chr,pos,rsid,a0,a1,b,se,p)]
-  setnames(ss, old="b", new="BETA", skip_absent=T)
-  fwrite(ss, paste0("in/susiex/sumstat-",anc,".txt"), sep=' ')
-})
+# TODO: ensure data contains the required columns
+lapply(loci_configs$locus, function(l) {
+mapply(subset_sumstatss[[l]], names(sumstats), FUN=function(s, nm) {
+  s <- s[, .(chr,pos,rsid,a0,a1,b,se,p)]
+  setnames(s, old="b", new="BETA", skip_absent=T)
+  fwrite(s, paste0("in/susiex/",l,"-",nm), sep=' ') # TODO: hardcoded for my data. Really easy to not hardcode. Just trying to think of elegant names for user's input data files. But might be impossible.
+})})
 ```
 
 ```{r}
@@ -230,69 +189,93 @@ mapply(sumstats, ancestries, FUN=function(ss,anc) {
 
 ### Run SuSiEx
 ```{r}
-system(paste("python3 ../third_party/SuSiEx/SuSiEx.py",
-             "--sst_file", paste(collapse=',', paste0("in/susiex/sumstat-",ancestries,".txt")),
-             "--n_gwas",   paste(collapse=',', data_configs$n),
-             "--ld_file",  paste(collapse=',', paste0("in/ld/",ancestries,"-susiex" )),
-             "--ref_file ../data/ref/1kg/plink_format/eas/g1000_eas,../data/ref/1kg/plink_format/eur/g1000_eur,../data/ref/1kg/plink_format/sas/g1000_sas", # TODO:
-             "--plink plink", # TODO:
-             "--out_dir out/susiex/",
-             "--out_name", lnm, # TODO:
-             "--chr ", lchr,
-             "--bp ", paste(sep=',', pos_min,pos_max),
-             "--chr_col", paste(collapse=',', rep(1,nrow(data_configs))),
-             "--bp_col",  paste(collapse=',', rep(2,nrow(data_configs))),
-             "--snp_col", paste(collapse=',', rep(3,nrow(data_configs))),
-             "--a1_col",  paste(collapse=',', rep(4,nrow(data_configs))),
-             "--a2_col",  paste(collapse=',', rep(5,nrow(data_configs))),
-             "--eff_col", paste(collapse=',', rep(6,nrow(data_configs))),
-             "--se_col",  paste(collapse=',', rep(7,nrow(data_configs))),
-             "--pval_col",paste(collapse=',', rep(8,nrow(data_configs))),
-             "--maf 0.005", 
-             "--mult-step True",
-             "--keep-ambig True",
-             "--full_out True"
-             # defaults: --max_iter=100, --pval_thresh=1e-5, --tol=1e-4, --n_sig=5, --level=95%, --min_purity=0.5
-))
+lapply(1:nrow(loci_configs), function(r) {
+  system(paste("python3 ../third_party/SuSiEx/SuSiEx.py",
+               "--sst_file", paste(collapse=',', paste0("in/susiex/",loci_configs[r,locus],"-",names(sumstats))),
+               "--n_gwas",   paste(collapse=',', data_configs$n),
+               "--ld_file",  paste(collapse=',', paste0("in/ld/",data_configs$ancestry,"-susiex")), # TODO: hardcoded for my one-ancestry-per-dataset data. Also, not adding locus to the name was not a mistake, it is to reduce disk usage for now before I move to project folder
+               "--ref_file ../data/ref/1kg/plink_format/eas/g1000_eas,../data/ref/1kg/plink_format/eur/g1000_eur,../data/ref/1kg/plink_format/sas/g1000_sas", # TODO:
+               "--plink plink", # TODO:
+               "--out_dir out/susiex/",
+               "--out_name", loci_configs[r,locus], # TODO:
+               "--chr ", loci_configs[r,chr],
+               "--bp ", paste(sep=',', loci_configs[r,pos_min], loci_configs[r,pos_max]),
+               "--chr_col", paste(collapse=',', rep(1,nrow(data_configs))),
+               "--bp_col",  paste(collapse=',', rep(2,nrow(data_configs))),
+               "--snp_col", paste(collapse=',', rep(3,nrow(data_configs))),
+               "--a1_col",  paste(collapse=',', rep(4,nrow(data_configs))),
+               "--a2_col",  paste(collapse=',', rep(5,nrow(data_configs))),
+               "--eff_col", paste(collapse=',', rep(6,nrow(data_configs))),
+               "--se_col",  paste(collapse=',', rep(7,nrow(data_configs))),
+               "--pval_col",paste(collapse=',', rep(8,nrow(data_configs))),
+               "--maf 0.005", # TODO: won't work if set to 0? Confirm, and ask yourself why b/c haven't we filtered out all MAF==0?
+               "--mult-step True",
+               "--keep-ambig True",
+               "--full_out True"
+               # defaults: --max_iter=100, --pval_thresh=1e-5, --tol=1e-4, --n_sig=5, --level=95%, --min_purity=0.5
+  ))
+})
 ```
 
 ## PAINTOR
 ### Prep Input
+PAINTOR only works on variants shared by ALL input datasets.\
 TODO: desc
 ```{r}
 # input.files
 writeLines(loci_configs$locus, "in/paintor/input.files")
 
-# LD
-# Unfortunately PAINTOR insists on having all its input files in a single dir, so that means either cluttering in/ld/ or making copies of the LD....
-# TODO: write this earlier so don't have to hang onto in mem? Although it is just one per anc in the ref.
-mapply(lds, ancestries, FUN = function(ld, a)
-  fwrite(ld, paste0("in/paintor/",loci_configs$locus,".ld_",a), sep=' ', col.names=F)
-) 
-
-# Locus file
-# TODO: naming business could be cleaner probably
-sapply(loci_configs$locus, function(l) {
-  lf <- setDT(lapply(sumstats, function(ss) ss$z))
-  setnames(lf, paste0("z_",names(lf)))
-  lf <- cbind(sumstats[[1]][rsid %in% common_rsids, .(rsid,chr,pos)], lf) # Can add more metadata than just rsid,chr,pos if you want
-  fwrite(lf, paste0("in/paintor/",l), sep=' ')
+# Locus files. Format:
+# rsid  pop1_z  pop2_z ...
+#  rs1   -3.14  -1.337
+#  ... <no NAs allowed>
+common_rsidss <- lapply(loci_configs$locus, function(l) {
+  common_rsids <- Reduce(intersect, lapply(subset_sumstatss[[l]], '[', j=rsid))
+  commonified_sumstats <- lapply(subset_sumstatss[[l]], function(s) s[rsid %in% common_rsids])
+  # We sorted before, so all sumstats' rsids are in the same order even after subsetting by common rsids.
+  paintor_locus_file <- Reduce(cbind, lapply(commonified_sumstats, '[', j=z), common_rsids) # Can add more metadata than just rsid if you want
+  colnames(paintor_locus_file) <- c("rsid", paste0(names(sumstats),"_z"))
+  paintor_locus_file
+  fwrite(paintor_locus_file, paste0("in/paintor/",l), sep=' ')
+  common_rsids
 })
 
-# Annotation file
+# LD files. Format: Pearson r, space-delim'd, no header, Must have same number of rows and order as locus file.
+tmp <- lapply(loci_configs$locus, function(l) {
+  common_rsids <- Reduce(intersect, lapply(subset_sumstatss[[l]], '[', j=rsid))
+  ld_filenames <- paste0("in/ld/",l,"-",unique(data_configs$ancestry),".ld.gz")
+  desired_filenames <- paste0("in/paintor/",l,".ld_",unique(data_configs$ancestry))
+  lds <- lapply(ld_filenames, fread)
+  mapply(lds, ld_rsid_orders[[l]], desired_filenames, SIMPLIFY=F, FUN = function(ld, ld_rsid_order, nm) {
+    new_order <- match(ld_rsid_order, common_rsids)
+    new_order <- new_order[!is.na(new_order)]
+    return(new_order)
+    fwrite(ld[new_order,new_order,with=F], nm, sep=' ', col.names=F)
+  })
+}) # TODO: A more elegant way? Unfortunately PAINTOR insists having all its input files in a single dir, so that means either cluttering in/ld/, changing filesnames in in/ld/ to use weird naming conventions, or making copies.... And PAINTOR doesn't accept compression so copies it is I guess....
+# AND it wants to take in all loci at once, which means you have to store ALL the (decompressed!) LD files at once w/o being able to delete them as you go.
+
+# Annotation files. Format:
+# annot1  annot2 ...
+# 0 or 1  0 or 1 
+# Must have same number of rows and order as locus file.
 # TODO: dummy all-0s file for now
-writeLines(c("dummy_annot", rep(0,nrow(sumstats[[1]]))), paste0("in/paintor/",loci_configs$locus,".annotations"))
+lapply(loci_configs$locus, function(l) {
+  common_rsids <- Reduce(intersect, lapply(subset_sumstatss[[l]], '[', j=rsid))
+  writeLines(c("dummy_annot", rep(0,length(common_rsids))),
+             paste0("in/paintor/",l,".annotations"))
+})
 ```
 
 ### Run PAINTOR
 ```{r}
 system(paste("../third_party/PAINTOR_V3.0/PAINTOR",
-             "-input in/paintor/input.files",
-             "-in in/paintor/",
-             "-out out/paintor/",
-             "-Zhead",  paste(collapse=',', paste0("z_",names(sumstats))),
-             "-LDname", paste(collapse=',', paste0("ld_",data_configs$ancestry)),
-             "-annotations dummy_annot",
-             "-enumerate 1"
+               "-input in/paintor/input.files",
+               "-in in/paintor/",
+               "-out out/paintor/",
+               "-Zhead",  paste(collapse=',', paste0(names(sumstats),"_z")),
+               "-LDname", paste(collapse=',', paste0("ld_",data_configs$ancestry)),
+               "-annotations dummy_annot",
+               "-enumerate 1"
 ))
 ```
