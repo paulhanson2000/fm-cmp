@@ -5,10 +5,11 @@ data
 
 *.html
 *_files/
+*_cache/
+
+core.*
 
 third_party/mr_mega/
 
 scratch/in/
 scratch/out/
-
-scratch/other/paintor/PAINTOR

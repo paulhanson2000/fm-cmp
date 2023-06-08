@@ -1,0 +1,136 @@
+---
+format: html
+toc: true
+---
+
+# Lib
+```{r}
+library(data.table)
+library(quarto)
+```
+
+# Load Results
+## MAHAJAN 2022 Paper
+TODO: this is hardcoded for this particular project, maybe remove in the future because the rest of this code is otherwise general.\
+Also loading `tmp` is a big slowdown... more elegant (not lazy) way to translate chrposIDs please
+```{r}
+#| cache: true
+loci_configs <- fread("locus.config")
+credset_files <- paste0("../data/DIAMANTE2022/fine_mapping/", list.files("../data/DIAMANTE2022/fine_mapping/", pattern="finemap."))
+credset_files <- sapply(loci_configs$locus, function(l) grep(l, credset_files, value=T)[1]) # TODO: "[1]" b/c Mahajan 2022 has multiple files for a few loci (before/after conditional analysis I guess)
+mahajan2022_results <- lapply(credset_files, fread, select=c("ID"      ,"POST"), # Or "PLOTPOST"? Not described in data's README...
+                                                 col.names=c("chrposID","pip" ))
+tmp <- fread("../data/DIAMANTE2022/sumstat/DIAMANTE-EAS.sumstat.txt", select=c("rsID","chrposID"))
+tmp <- tmp[ chrposID %in% Reduce(union, lapply(mahajan2022_results,'[',j=chrposID)) ] # Optimization, but can be omitted to no effect.
+mahajan2022_results <- lapply(mahajan2022_results, function(mr) {
+  mr <- merge(x=mr, y=tmp, by="chrposID")[,.(rsID,pip)]
+  setnames(mr, old=c("rsID"), new="rsid")
+})
+```
+
+## PAINTOR
+```{r}
+credset_files <- paste0("out/paintor/", list.files("out/paintor/", pattern=".results"))
+credset_files <- credset_files[!grepl("LogFile", credset_files)]
+paintor_results <- lapply(credset_files, fread, select=c("rsid", "Posterior_Prob"),
+                                             col.names=c("rsid",       "pip"     ))
+names(paintor_results) <- sub("out/paintor/(.*).results", "\\1", credset_files)
+```
+## SuSiEx
+```{r}
+credset_files <- paste0("out/susiex/", list.files("out/susiex/", pattern=".cs")) 
+susiex_results <- lapply(credset_files, fread, select=c("SNP", "CS_PIP"),
+                                            col.names=c("rsid", "pip"  ))
+names(susiex_results) <- sub("out/susiex/(.*).cs", "\\1", credset_files)
+```
+
+# Prep Results for JS
+```{r}
+# TODO: absolutely hideous. But not worrrying rn b/c will probably want to rewrite this when there are more methods a/w. E.g. a list of results_s_ would be cleaner.
+  # perfect place for mapply if only the mahajan2022_results loci were in the same order. 
+  # Like it was before:
+    # paintor_results <- mapply(paintor_results, common_rsids_per_locus, SIMPLIFY=F, FUN = function(p,vs) {
+    #     p <- p[rsid %in% vs]
+    #     p <- p[order(rsid) ]
+    # })
+common_rsids_per_locus <- lapply(loci_configs$locus, function(l) {
+    common_rsids <- Reduce(intersect, list(mahajan2022_results[[l]]$rsid,
+                                               paintor_results[[l]]$rsid,
+                                                susiex_results[[l]]$rsid))
+})
+names(common_rsids_per_locus) <- loci_configs$locus
+
+mahajan2022_results <- sapply(loci_configs$locus, simplify=F, USE.NAMES=T, function(l) {
+    r <- mahajan2022_results[[l]][rsid %in% common_rsids_per_locus[[l]] ]
+    r <- r[order(rsid) ]
+})
+paintor_results <- lapply(loci_configs$locus, function(l) {
+    r <- paintor_results[[l]][rsid %in% common_rsids_per_locus[[l]] ]
+    r <- r[order(rsid) ]
+})
+names(paintor_results) <- loci_configs$locus # TODO: Terrible code, reader couldn't be sure if is same order, can't wait to change this
+susiex_results <- lapply(loci_configs$locus, function(l) {
+    r <- susiex_results[[l]][rsid %in% common_rsids_per_locus[[l]] ]
+    r <- r[order(rsid) ]
+})
+names(susiex_results) <- loci_configs$locus 
+
+# Check all rsids in same order for every locus
+all(mapply(paintor_results, susiex_results, FUN = function(p,s) {
+  all(sapply(list(p$rsid,s$rsid), identical, p$rsid))
+}))
+
+mahajan2022_pips <- lapply(mahajan2022_results, '[', j=pip)
+paintor_pips <- lapply(paintor_results, '[', j=pip)
+susiex_pips  <- lapply(susiex_results,  '[', j=pip)
+
+ojs_define(mahajan2022_pips = mahajan2022_pips,
+           paintor_pips = paintor_pips,
+           susiex_pips = susiex_pips)
+```
+
+[I update as you change things: ${methodx} & ${methody}: ${locus}]{.aside} \
+
+::: {.column-margin}
+Fancy math:
+$$\frac{d}{dx}\left( \int_{a}^{x} f(u)\,du\right)=f(x).$$
+:::
+
+```{r}
+#| echo: false
+#| column: margin
+plot(rnorm(100),runif(100))
+```
+
+# OJS
+[Instead of scatterplots, maybe two transparent histograms overlaid ontop of each other, with x-axis being bp?]{.aside}
+```{ojs}
+//| code-fold: true
+viewof methodx = Inputs.radio(["Mahajan2022", "PAINTOR", "SuSiEx"], {label: "Method X", value: "Mahajan2022"})
+viewof methody = Inputs.radio(["Mahajan2022", "PAINTOR", "SuSiEx"], {label: "Method Y", value: "SuSiEx"})
+viewof locus = Inputs.select(Object.keys(susiex_pips), {label:"Locus"})
+
+method_results = ({
+  Mahajan2022: mahajan2022_pips,
+  PAINTOR: paintor_pips,
+  SuSiEx: susiex_pips
+})
+
+plot_data = [
+  method_results[methodx][locus],
+  method_results[methody][locus]
+]
+
+//Plot.dot(transpose(plot_data), {x: "0", y: "1"}).plot()
+Plot.plot({
+  grid: true,
+  x: {label: methodx.concat(" PIPs")},
+  y: {label: methody.concat(" PIPs")},
+  marks: [
+    Plot.dot(transpose(plot_data), {
+      x: (d) => d[0],
+      y: (d) => d[1]
+    })
+  ]
+})
+```
