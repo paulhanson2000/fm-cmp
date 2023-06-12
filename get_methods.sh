@@ -1,10 +1,11 @@
 #!/bin/bash
+set -e # exit if anything fails
 
 git submodule update --init
 
 # MR-MEGA
-mkdir ./third_party/mr_mega/
-cd    ./third_party/mr_mega/
+mkdir -p ./third_party/mr_mega/
+cd       ./third_party/mr_mega/
 if ! [ -f MR-MEGA ]; then
   wget https://tools.gi.ut.ee/tools/MR-MEGA_v0.2.zip
   unzip MR-MEGA_v0.2.zip

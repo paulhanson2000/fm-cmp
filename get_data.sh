@@ -7,9 +7,9 @@ if [ -d /lustre03/project/6074892/datasets/ ]; then
   exit 0
 fi
 
-# DIAMANTE 2022 summary stats
-mkdir ./data/DIAMANTE2022/sumstat/
-cd    ./data/DIAMANTE2022/sumstat/
+# DIAMANTE 2022 summary stats TODO download the fine-mapping results too?
+mkdir -p ./data/DIAMANTE2022/sumstat/
+cd       ./data/DIAMANTE2022/sumstat/
 wget https://personal.broadinstitute.org/ryank/DIAMANTE.sumstats.zip # Alternative: http://diagram-consortium.org
 unzip DIAMANTE.sumstats.zip
 gzip -d DIAMANTE-EAS.sumstat.txt.gz DIAMANTE-EUR.sumstat.txt.gz DIAMANTE-SAS.sumstat.txt.gz
@@ -18,8 +18,8 @@ cd -
 
 # 1000 Genomes reference
 ## Sample information (gender, ancestry)
-mkdir -p ./data/ref/1kg/
-cd       ./data/ref/1kg/
+mkdir -p ./data/ref/1kg/sample_info/
+cd       ./data/ref/1kg/sample_info/
 wget http://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/integrated_call_samples_v3.20130502.ALL.panel
 
 cd -

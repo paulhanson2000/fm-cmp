@@ -138,7 +138,10 @@ ld_calc <- function(gds_file, rs_ids, sample_ids=NULL, ref_alleles=NULL, outfile
   rs_ids_order <- match(seqGetData(gds_file,"annotation/id"), rs_ids)
   ld <- ld[rs_ids_order, rs_ids_order]
 
-  if(!is.null(outfile_name)) fwrite(ld, outfile_name, sep=' ', col.names=F, compress="gzip")
+  if(!is.null(outfile_name)) {
+    if(!dir.exists(dirname(outfile_name))) dir.create(dirname(outfile_name), recursive=T)
+    fwrite(ld, outfile_name, sep=' ', col.names=F, compress="gzip")
+  }
 
   seqFilterPop(gds_file) # Set filter to however it was before
   ld
@@ -173,6 +176,7 @@ A summary stats file, as follows:\
 TODO: make nice table\
 The β column _must_ be named "BETA" or "OR", but besides that they may be named arbitrarily.
 ```{r}
+if(!dir.exists("in/susiex")) dir.create("in/susiex")
 # TODO: ensure data contains the required columns
 lapply(loci_configs$locus, function(l) {
 mapply(subset_sumstatss[[l]], names(sumstats), FUN=function(s, nm) {
@@ -189,6 +193,7 @@ mapply(subset_sumstatss[[l]], names(sumstats), FUN=function(s, nm) {
 
 ### Run SuSiEx
 ```{r}
+if(!dir.exists("out/susiex")) dir.create("out/susiex", recursive=T)
 lapply(1:nrow(loci_configs), function(r) {
   system(paste("python3 ../third_party/SuSiEx/SuSiEx.py",
                "--sst_file", paste(collapse=',', paste0("in/susiex/",loci_configs[r,locus],"-",names(sumstats))),
@@ -222,6 +227,7 @@ lapply(1:nrow(loci_configs), function(r) {
 PAINTOR only works on variants shared by ALL input datasets.\
 TODO: desc
 ```{r}
+if(!dir.exists("in/paintor")) dir.create("in/paintor")
 # input.files
 writeLines(loci_configs$locus, "in/paintor/input.files")
 
@@ -241,7 +247,7 @@ common_rsidss <- lapply(loci_configs$locus, function(l) {
 })
 
 # LD files. Format: Pearson r, space-delim'd, no header, Must have same number of rows and order as locus file.
-tmp <- lapply(loci_configs$locus, function(l) {
+lapply(loci_configs$locus, function(l) {
   common_rsids <- Reduce(intersect, lapply(subset_sumstatss[[l]], '[', j=rsid))
   ld_filenames <- paste0("in/ld/",l,"-",unique(data_configs$ancestry),".ld.gz")
   desired_filenames <- paste0("in/paintor/",l,".ld_",unique(data_configs$ancestry))
@@ -249,7 +255,6 @@ tmp <- lapply(loci_configs$locus, function(l) {
   mapply(lds, ld_rsid_orders[[l]], desired_filenames, SIMPLIFY=F, FUN = function(ld, ld_rsid_order, nm) {
     new_order <- match(ld_rsid_order, common_rsids)
     new_order <- new_order[!is.na(new_order)]
-    return(new_order)
     fwrite(ld[new_order,new_order,with=F], nm, sep=' ', col.names=F)
   })
 }) # TODO: A more elegant way? Unfortunately PAINTOR insists having all its input files in a single dir, so that means either cluttering in/ld/, changing filesnames in in/ld/ to use weird naming conventions, or making copies.... And PAINTOR doesn't accept compression so copies it is I guess....
@@ -269,6 +274,7 @@ lapply(loci_configs$locus, function(l) {
 
 ### Run PAINTOR
 ```{r}
+if(!dir.exists("out/paintor")) dir.create("out/paintor", recursive=T)
 system(paste("../third_party/PAINTOR_V3.0/PAINTOR",
                "-input in/paintor/input.files",
                "-in in/paintor/",
@@ -276,6 +282,6 @@ system(paste("../third_party/PAINTOR_V3.0/PAINTOR",
                "-Zhead",  paste(collapse=',', paste0(names(sumstats),"_z")),
                "-LDname", paste(collapse=',', paste0("ld_",data_configs$ancestry)),
                "-annotations dummy_annot",
-               "-enumerate 1"
+               "-mcmc" # Automatically guess the amount of causal variants, as opposed to a set number with "-enumerate #"
 ))
 ```
