@@ -9,15 +9,21 @@ library(data.table)
 library(quarto)
 ```
 
+```{r}
+#| include: false
+"%ni%" <- Negate("%in%")
+```
+
 # Load Results
 ## MAHAJAN 2022 Paper
 TODO: this is hardcoded for this particular project, maybe remove in the future because the rest of this code is otherwise general.\
 Also loading `tmp` is a big slowdown... more elegant (not lazy) way to translate chrposIDs please
 ```{r}
-#| cache: true
+#| cache: true 
 loci_configs <- fread("locus.config")
 credset_files <- paste0("../data/DIAMANTE2022/fine_mapping/", list.files("../data/DIAMANTE2022/fine_mapping/", pattern="finemap."))
 credset_files <- sapply(loci_configs$locus, function(l) grep(l, credset_files, value=T)[1]) # TODO: "[1]" b/c Mahajan 2022 has multiple files for a few loci (before/after conditional analysis I guess)
+credset_files <- credset_files[!is.na(credset_files)]
 mahajan2022_results <- lapply(credset_files, fread, select=c("ID"      ,"POST"), # Or "PLOTPOST"? Not described in data's README...
                                                  col.names=c("chrposID","pip" ))
 tmp <- fread("../data/DIAMANTE2022/sumstat/DIAMANTE-EAS.sumstat.txt", select=c("rsID","chrposID"))
@@ -61,15 +67,18 @@ common_rsids_per_locus <- lapply(loci_configs$locus, function(l) {
 names(common_rsids_per_locus) <- loci_configs$locus
 
 mahajan2022_results <- sapply(loci_configs$locus, simplify=F, USE.NAMES=T, function(l) {
+    print(paste(sum(mahajan2022_results[[l]]$rsid %ni% common_rsids_per_locus[[l]]), nrow(mahajan2022_results), "ommitted from mahajan", l, "credible set because they weren't shared."))
     r <- mahajan2022_results[[l]][rsid %in% common_rsids_per_locus[[l]] ]
     r <- r[order(rsid) ]
 })
 paintor_results <- lapply(loci_configs$locus, function(l) {
+    print(paste(sum(paintor_results[[l]]$rsid %ni% common_rsids_per_locus[[l]]), nrow(paintor_results), "ommitted from paintor", l, "credible set because they weren't shared."))
     r <- paintor_results[[l]][rsid %in% common_rsids_per_locus[[l]] ]
     r <- r[order(rsid) ]
 })
 names(paintor_results) <- loci_configs$locus # TODO: Terrible code, reader couldn't be sure if is same order, can't wait to change this
 susiex_results <- lapply(loci_configs$locus, function(l) {
+    print(paste(sum(susiex_results[[l]]$rsid %ni% common_rsids_per_locus[[l]]), nrow(susiex_results), "ommitted from susiex", l, "credible set because they weren't shared."))
     r <- susiex_results[[l]][rsid %in% common_rsids_per_locus[[l]] ]
     r <- r[order(rsid) ]
 })

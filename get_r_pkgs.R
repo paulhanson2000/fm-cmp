@@ -1,4 +1,4 @@
-install.packages(c("BiocManager", "remotes", "quarto"), repos="https://cloud.r-project.org")
+install.packages(c("BiocManager", "remotes", "quarto", "data.table", "R.utils"), repos="https://cloud.r-project.org")
 
 BiocManager::install(c("SeqArray", "SNPRelate"),
                      update=F, ask=F)
