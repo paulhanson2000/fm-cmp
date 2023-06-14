@@ -4,8 +4,10 @@ data
 *.gz
 
 *.html
+*.rmarkdown
 *_files/
 *_cache/
+*.com
 
 core.*
 
@@ -13,3 +15,4 @@ third_party/mr_mega/
 
 scratch/in/
 scratch/out/
+scratch/old/results/
