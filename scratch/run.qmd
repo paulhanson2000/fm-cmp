@@ -46,6 +46,7 @@ names(sumstats) <- basename(data_configs$filepath)
 ref <- seqOpen("../data/ref/1kg/gds_format/1KG_ALL.autosomes.phase3_shapeit2_mvncall_integrated_v5a.20130502.genotypes.gds", readonly=F, allow.duplicate=T)
 
 # TODO: Move to a pre-process script and perform on a COPY of the data and store s/where. Annoying, but the "data/" dir should really remain untouched. Should be able to look in there and take md5sums and be confident e/t in there is raw.
+  # Or, maybe not since each section of the file can have its own checksum. But in that case, use seqDigest on the original file then seqCheck here to verify data integrity.
 sample_info <- fread("../data/ref/1kg/sample_info/integrated_call_samples_v3.20130502.ALL.panel")
 identical(seqGetData(ref,"sample.id"), sample_info$sample)
 seqAddValue(ref, "sample.annotation/ancestry", sample_info$super_pop, replace=T)
@@ -247,7 +248,7 @@ writeLines(loci_configs$locus, "in/paintor/input.files")
 #  rs1   -3.14  -1.337
 #  ... <no NAs allowed>
 desired_rsidss <- sapply(loci_configs$locus, simplify=F, function(l) {
-                           signif_rsids <- Reduce(union,     lapply(subset_sumstatss[[l]], '[', j=rsid)) # TODO: p threshold here
+  signif_rsids <- Reduce(union,     lapply(subset_sumstatss[[l]], '[', j=rsid)) # NOTE: optional hardcoded p threshold here
   common_rsids <- Reduce(intersect, lapply(subset_sumstatss[[l]], '[',           j=rsid))
   desired_rsids <- intersect(signif_rsids, common_rsids)
 })
