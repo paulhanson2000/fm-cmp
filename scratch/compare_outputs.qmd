@@ -144,6 +144,7 @@ Plot.plot({
       x: (d) => d[0],
       y: (d) => d[1]
     })
+    // TODO: xy line
   ]
 })
 ```

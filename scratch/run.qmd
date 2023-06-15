@@ -118,24 +118,29 @@ This is more space-efficient than calculating LD per dataset per locus, assuming
 # Signed Pearson correlation.
 # Returned LD matrix's rows/cols are sorted to match the order of the given rs_ids.
 # Filters on the GDS file ~are~ taken into account. The GDS file will be returned with the same filters as before.
-ld_calc <- function(gds_file, rs_ids, sample_ids=NULL, ref_alleles=NULL, outfile_name=NULL) {
+ld_calc <- function(gds_file, rs_ids, sample_ids=NULL, ref_alleles=NULL, outfile_name=NULL, n_threads=parallel::detectCores()) {
   if(is.null(ref_alleles)) warning("calc_ld() warning: specifying your data's ref_alleles is highly recommended! If the reference alleles (i.e. non-effect alleles) in your data =/= those in the reference panel, the LD will be incorrect.")
-  seqFilterPush(gds_file) # Save user prexisting filter on the file if they have one
+  seqFilterPush(gds_file) # Save user's prexisting filter on the file if they have one
 
   seqSetFilterAnnotID(gds_file, rs_ids)
-  if(!is.null(sample_ids)) seqSetFilter(gds_file, sample.id = sample_ids)
+  if(!is.null(sample_ids)) seqSetFilter(gds_file, sample.id = sample_ids, action="intersect")
 
-  tmp_filename <- "/tmp/snpgds_format_file.gds"
+  tmp_filename <- "/tmp/snpgds_format_file3.gds"
   seqGDS2SNP(gds_file, tmp_filename, compress.geno="", compress.annotation="")
   tmp <- snpgdsOpen(tmp_filename, readonly=F)
+  #print(paste(identical(read.gdsn(index.gdsn(tmp,"snp.rs.id")), seqGetData(gds_file,"annotation/id")))) # TRUE
+
+  # Sort user-given ref_alleles to match the order of the GDS file before allele switching!
+  # Why not sort the GDS file to match user input instead? B/c raw data files should not be edited.
+  ref_alleles <- ref_alleles[match(seqGetData(gds_file,"annotation/id"), rs_ids)]
   snpgdsAlleleSwitch(tmp, toupper(ref_alleles))
-  ld <- snpgdsLDMat(tmp, slide=0, method="corr", num.thread=parallel::detectCores())$LD
+  ld <- snpgdsLDMat(tmp, slide=0, method="corr", num.thread=n_threads)$LD
 
   snpgdsClose(tmp) # Don't need SNP GDS format file anymore
   unlink(tmp_filename)
 
   # Sort LD matrix to match the order of the user-given rs_ids.
-  rs_ids_order <- match(seqGetData(gds_file,"annotation/id"), rs_ids)
+  rs_ids_order <- match(rs_ids, seqGetData(gds_file,"annotation/id"))
   ld <- ld[rs_ids_order, rs_ids_order]
 
   if(!is.null(outfile_name)) {
@@ -154,18 +159,24 @@ ld_rsid_orders <-
     samples_of_an_ancestry <- samples_of_each_ancestry[[anc]]
     sumstats_of_an_ancestry <- subset_sumstatss[[l]][which(data_configs$ancestry == anc)]
     common_rsids_in_sumstats_of_an_ancestry <- Reduce(union, lapply(sumstats_of_an_ancestry, '[', j=rsid))
-  
-    # TODO: ughhh this is not generalizable b/c what if the different datasets have different effect alleles....
-      # For now I can assume they're consistent b/c there's only one dataset per ancestry.
-      # Simplest solution I can think of: do a little extra preproc just after reading the data. Flip a0<->a1 to be consistent and flip the β (And z. And SE?) appropriately.
+
+    # TODO: not generalizable if multiple datasets in an ancestry with different rsids and/or different effect alleles.
+      # Simple solution would be in data pre-proc: just flip alleles & β & z & etc..
+    # For now w/ just the DIAMANTE data w/ one dataset per ancestry it's fine. Even the different ancestries have matching a0/a1, I checked.
+    a_sumstat_of_an_ancestry <- sumstats_of_an_ancestry[[1]][rsid %in% common_rsids_in_sumstats_of_an_ancestry]
+    #print(paste(identical(a_sumstat_of_an_ancestry$rsid, common_rsids_in_sumstats_of_an_ancestry)))
+    ref_alleles <- a_sumstat_of_an_ancestry$a0
+
     ld_calc(ref, rs_ids = common_rsids_in_sumstats_of_an_ancestry,
              sample_ids = samples_of_an_ancestry,
-            ref_alleles = sumstats_of_an_ancestry[[1]]$a0,
+            ref_alleles = ref_alleles,
            outfile_name = paste0("in/ld/",l,"-",anc,".ld.gz")       ) 
   
-    common_rsids_in_sumstats_of_an_ancestry # Return the order of the LD mat's rows/cols, importnant! # TODO: write to file so no need recompute
+    common_rsids_in_sumstats_of_an_ancestry # Return the order of the LD mat's rows/cols, important!
 })})
 names(ld_rsid_orders) <- loci_configs$locus
+
+save(ld_rsid_orders, file="in/ld/ld_rsid_orders.RData")
 ```
 
 # Run Fine-Mapping Methods
@@ -213,7 +224,7 @@ lapply(1:nrow(loci_configs), function(r) {
                "--eff_col", paste(collapse=',', rep(6,nrow(data_configs))),
                "--se_col",  paste(collapse=',', rep(7,nrow(data_configs))),
                "--pval_col",paste(collapse=',', rep(8,nrow(data_configs))),
-               "--maf 0.005", # TODO: won't work if set to 0? Confirm, and ask yourself why b/c haven't we filtered out all MAF==0?
+               "--maf 0.005", # Default. TODO: if set to 0, crashes—why?
                "--mult-step True",
                "--keep-ambig True",
                "--full_out True"
@@ -235,27 +246,38 @@ writeLines(loci_configs$locus, "in/paintor/input.files")
 # rsid  pop1_z  pop2_z ...
 #  rs1   -3.14  -1.337
 #  ... <no NAs allowed>
-common_rsidss <- lapply(loci_configs$locus, function(l) {
-  common_rsids <- Reduce(intersect, lapply(subset_sumstatss[[l]], '[', j=rsid))
-  commonified_sumstats <- lapply(subset_sumstatss[[l]], function(s) s[rsid %in% common_rsids])
-  # We sorted before, so all sumstats' rsids are in the same order even after subsetting by common rsids.
-  paintor_locus_file <- Reduce(cbind, lapply(commonified_sumstats, '[', j=z), common_rsids) # Can add more metadata than just rsid if you want
+desired_rsidss <- sapply(loci_configs$locus, simplify=F, function(l) {
+                           signif_rsids <- Reduce(union,     lapply(subset_sumstatss[[l]], '[', j=rsid)) # TODO: p threshold here
+  common_rsids <- Reduce(intersect, lapply(subset_sumstatss[[l]], '[',           j=rsid))
+  desired_rsids <- intersect(signif_rsids, common_rsids)
+})
+
+lapply(loci_configs$locus, function(l) {
+  desired_rsids <- desired_rsidss[[l]]
+  desired_sumstats <- lapply(subset_sumstatss[[l]], function(s) s[rsid %in% desired_rsids]) # We sorted before, so all sumstats' rsids are in the same order even after subsetting. 
+
+  paintor_locus_file <- Reduce(cbind, lapply(desired_sumstats, '[', j=z), desired_rsids) # Can add more metadata than just rsid if you want
   colnames(paintor_locus_file) <- c("rsid", paste0(names(sumstats),"_z"))
-  paintor_locus_file
   fwrite(paintor_locus_file, paste0("in/paintor/",l), sep=' ')
-  common_rsids
 })
 
 # LD files. Format: Pearson r, space-delim'd, no header, Must have same number of rows and order as locus file.
 lapply(loci_configs$locus, function(l) {
-  common_rsids <- Reduce(intersect, lapply(subset_sumstatss[[l]], '[', j=rsid))
+  desired_rsids <- desired_rsidss[[l]]
   ld_filenames <- paste0("in/ld/",l,"-",unique(data_configs$ancestry),".ld.gz")
   desired_filenames <- paste0("in/paintor/",l,".ld_",unique(data_configs$ancestry))
-  lds <- lapply(ld_filenames, fread)
+  lds <- lapply(ld_filenames, function(f) as.matrix(fread(f)))
   mapply(lds, ld_rsid_orders[[l]], desired_filenames, SIMPLIFY=F, FUN = function(ld, ld_rsid_order, nm) {
-    new_order <- match(ld_rsid_order, common_rsids)
-    new_order <- new_order[!is.na(new_order)]
-    fwrite(ld[new_order,new_order,with=F], nm, sep=' ', col.names=F)
+    # return(c(length(ld_rsid_order),length(desired_rsids), sum(ld_rsid_order %in% desired_rsids)))
+    # TODO: This code could definitely be made clearer.
+    desired_subset <- ld_rsid_order %in% desired_rsids # TODO: rename ld_rsid_order variable to not "order". Because it's just rsids.
+    ld <- ld[desired_subset, desired_subset]
+    ld_rsid_order <- ld_rsid_order[desired_subset]
+
+    desired_order <- match(desired_rsids, ld_rsid_order)
+    ld <- ld[desired_order,desired_order]
+
+    fwrite(ld, nm, sep=' ', col.names=F)
   })
 }) # TODO: A more elegant way? Unfortunately PAINTOR insists having all its input files in a single dir, so that means either cluttering in/ld/, changing filesnames in in/ld/ to use weird naming conventions, or making copies.... And PAINTOR doesn't accept compression so copies it is I guess....
 # AND it wants to take in all loci at once, which means you have to store ALL the (decompressed!) LD files at once w/o being able to delete them as you go.
@@ -266,8 +288,8 @@ lapply(loci_configs$locus, function(l) {
 # Must have same number of rows and order as locus file.
 # TODO: dummy all-0s file for now
 lapply(loci_configs$locus, function(l) {
-  common_rsids <- Reduce(intersect, lapply(subset_sumstatss[[l]], '[', j=rsid))
-  writeLines(c("dummy_annot", rep(0,length(common_rsids))),
+  desired_rsids <- desired_rsidss[[l]]
+  writeLines(c("dummy_annot", rep(0,length(desired_rsids))),
              paste0("in/paintor/",l,".annotations"))
 })
 ```
@@ -282,6 +304,6 @@ system(paste("../third_party/PAINTOR_V3.0/PAINTOR",
                "-Zhead",  paste(collapse=',', paste0(names(sumstats),"_z")),
                "-LDname", paste(collapse=',', paste0("ld_",data_configs$ancestry)),
                "-annotations dummy_annot",
-               "-mcmc" # Automatically guess the amount of causal variants, as opposed to a set number with "-enumerate #"
+               "-enumerate 1"
 ))
 ```
