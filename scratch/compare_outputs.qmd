@@ -102,13 +102,14 @@ ojs_define(mahajan_pips = mahajan_pips,
            susiex_pips = susiex_pips)
 ```
 
-[I update as you change things: ${methodx} & ${methody}: ${locus}]{.aside} \
+[Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam...]{.aside}
 
 ::: {.column-margin}
 Fancy math:
 $$\frac{d}{dx}\left( \int_{a}^{x} f(u)\,du\right)=f(x).$$
 :::
 
+[Random plot:]{.aside}
 ```{r}
 #| echo: false
 #| column: margin
@@ -116,12 +117,14 @@ plot(rnorm(100),runif(100))
 ```
 
 # OJS
-[Instead of scatterplots, maybe two transparent histograms overlaid ontop of each other, with x-axis being bp?]{.aside}
+[I update as you change things: ${methodx} & ${methody}: ${locus}]{.aside} \
 ```{ojs}
 //| code-fold: true
 viewof methodx = Inputs.radio(["Mahajan2022", "PAINTOR", "SuSiEx"], {label: "Method X", value: "Mahajan2022"})
 viewof methody = Inputs.radio(["Mahajan2022", "PAINTOR", "SuSiEx"], {label: "Method Y", value: "SuSiEx"})
 viewof locus = Inputs.select(Object.keys(susiex_pips), {label:"Locus"})
+viewof xyline = Inputs.toggle({label: "x=y line"})
+viewof consistent_axes = Inputs.toggle({label: "Consistent Axes"})
 
 method_results = ({
   Mahajan2022: mahajan_pips,
@@ -134,17 +137,24 @@ plot_data = [
   method_results[methody][locus]
 ]
 
-//Plot.dot(transpose(plot_data), {x: "0", y: "1"}).plot()
+//plot_data
+//plot_data[0]
+max_x = Math.max(...plot_data[0]);
+max_y = Math.max(...plot_data[1]);
+max_xy = Math.max(max_x, max_y);
+//max_xy
 Plot.plot({
+  width: 600, height: 600,
   grid: true,
-  x: {label: methodx.concat(" PIPs")},
-  y: {label: methody.concat(" PIPs")},
+  x: {label: methodx.concat(" PIPs"), domain: consistent_axes ? [0,max_xy] : [0,max_x]},
+  y: {label: methody.concat(" PIPs"), domain: consistent_axes ? [0,max_xy] : [0,max_y]},
   marks: [
+    Plot.frame(),
     Plot.dot(transpose(plot_data), {
       x: (d) => d[0],
       y: (d) => d[1]
-    })
-    // TODO: xy line
+    }),
+    Plot.lineX(xyline ? [0,1] : [0,0], {stroke:"gray", strokeDasharray:"5 5"}),
   ]
-})
+});
 ```
