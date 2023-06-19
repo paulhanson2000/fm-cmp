@@ -7,7 +7,7 @@ if [ -d /lustre03/project/6074892/datasets/ ]; then
   exit 0
 fi
 
-# DIAMANTE 2022 summary stats and fine-mapping results
+# Mahajan 2022 summary stats and fine-mapping results
 mkdir -p ./data/DIAMANTE2022/sumstat/
 cd       ./data/DIAMANTE2022/sumstat/
 wget https://personal.broadinstitute.org/ryank/DIAMANTE.sumstats.zip # Alternative: http://diagram-consortium.org

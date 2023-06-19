@@ -13,7 +13,7 @@
   - ~~[RIVERA](https://github.com/yueli-compbio/RiVIERA) ([paper](https://doi.org/10.1093/nar/gkw627))~~
   - [SuSiEx](https://github.com/getian107/SuSiEx) ([SuSiEx paper](https://doi.org/10.1101/2023.01.07.23284293), [original SuSie paper](https://doi.org/10.1111/rssb.12388) and [susieR package](https://github.com/stephenslab/susieR))
     - [SuSiE-inf and FINEMAP-inf](https://github.com/FinucaneLab/fine-mapping-inf) ([paper](https://doi.org/10.1101/2022.10.21.513123))
-+ Try incorporating functional annotations if possible, if not already built-in to the method (e.g. [fGWAS](https://github.com/joepickrell/fgwas), [PolyFun](https://github.com/omerwe/polyfun))
++ Try incorporating functional annotations if possible, if not already built-in to the method (e.g. [fgwas](https://github.com/joepickrell/fgwas), [PolyFun](https://github.com/omerwe/polyfun))
 + Try using the most suitable multi-ancestry methods on traits other than T2D (e.g. HbA1C, fasting insulin, MAGIC fasting glucose...)
 
 # How to run
@@ -23,7 +23,9 @@ If you are on a compute cluster using LMod, load the required modules:
 source get_modules_FOR_COMPUTE_CLUSTER_PEOPLE.sh
 ```
 If you are not on a cluster, you will need to get the following dependencies yourself:
-+ [R](https://cran.r-project.org/mirrors.html)
++ [R](https://cran.r-project.org/mirrors.html) (tested on: version 4.2.2 (works))
++ [Python](https://www.python.org/) (tested on: version 3.11.2 (works), 3.8.10 (fails))
++ [Boost](https://www.boost.org/) (for fgwas)
 + [GSL](https://www.gnu.org/software/gsl/) (for MsCAVIAR)
 + [LAPACK](https://www.netlib.org/lapack/#_software) (for MsCAVIAR)
 
@@ -34,4 +36,6 @@ To download data and the required R packages, run the following. Only needs to b
 ./get_data
 Rscript get_r_pkgs.R
 ```
+# TODO
+Document how to get a GitHub token to be allowed to download more stuff, may be required for the R packages hosted on GitHub
 <WIP>
