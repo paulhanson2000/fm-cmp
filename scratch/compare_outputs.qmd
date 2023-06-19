@@ -80,18 +80,18 @@ resultss <- list(Mahajan = mahajan_results,
                  PAINTOR = paintor_results,
                  SuSiEx  =  susiex_results)
 
-# Need to subset
-# TODO: Figure out how to subset only as much as is needed to compare the two selected methods, rather than requiring IDs be shared by ALL methods?
-common_rsids_per_locus <- sapply(loci_configs$locus, simplify=F, function(l) {
-  Reduce(intersect, lapply(resultss, function(results) results[[l]]$rsid))
-})
-
-resultss <- mapply(resultss, names(resultss), SIMPLIFY=F, FUN = function(results,method) {
-            sapply(loci_configs$locus, simplify=F, function(l) {
-
-              print(paste( sum(results[[l]]$rsid %ni% common_rsids_per_locus[[l]]), "variants omitted from", method, l, "credible set results because they weren't shared." ))
-              setorder(rsid, x=results[[l]][rsid %in% common_rsids_per_locus[[l]]])
-})})
+resultss <- sapply(loci_configs$locus, simplify=F, function(l) {
+  locus_rsids_union <- Reduce(union, lapply(resultss, function(results) results[[l]]$rsid))
+  lapply(resultss, function(results) {
+    method_missing_rsids <- locus_rsids_union[locus_rsids_union %ni% results[[l]]$rsid]
+    if(length(method_missing_rsids)==0)
+      tmp <- results[[l]]
+    else
+      tmp <- rbind(results[[l]], data.table(rsid = method_missing_rsids, pip = 0))
+    setorder(tmp, rsid)
+  })
+}) # Returns resultss[locus][method]
+resultss <- purrr::transpose(resultss) # Turn back to resultss[method][locus]
 
 mahajan_pips <- lapply(resultss$Mahajan, '[', j=pip)
 paintor_pips <- lapply(resultss$PAINTOR, '[', j=pip)
@@ -123,6 +123,10 @@ plot(rnorm(100),runif(100))
 viewof methodx = Inputs.radio(["Mahajan2022", "PAINTOR", "SuSiEx"], {label: "Method X", value: "Mahajan2022"})
 viewof methody = Inputs.radio(["Mahajan2022", "PAINTOR", "SuSiEx"], {label: "Method Y", value: "SuSiEx"})
 viewof locus = Inputs.select(Object.keys(susiex_pips), {label:"Locus"})
+//viewof xslider = Inputs.range([0,1], {label: "X slider"})
+//max_x = Math.pow(xslider,10)
+//viewof yslider = Inputs.range([0,1], {label: "Y slider"})
+//max_y = Math.pow(yslider,10)
 viewof xyline = Inputs.toggle({label: "x=y line"})
 viewof consistent_axes = Inputs.toggle({label: "Consistent Axes"})
 
