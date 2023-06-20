@@ -64,6 +64,7 @@ names(paintor_results) <- sub("out/paintor/(.*).results", "\\1", credset_files)
 ```
 ## SuSiEx
 ```{r}
+# TODO: update to read SuSiEx 1.1 results. --full_out is no longer an option, so take the max of the PIPs in all credsets for each SNP in the .snp file.
 credset_files <- paste0("out/susiex/", list.files("out/susiex/", pattern=".cs")) 
 susiex_results <- lapply(credset_files, fread, select=c("SNP", "OVRL_PIP"),
                                             col.names=c("rsid", "pip"  ))
@@ -123,10 +124,10 @@ plot(rnorm(100),runif(100))
 viewof methodx = Inputs.radio(["Mahajan2022", "PAINTOR", "SuSiEx"], {label: "Method X", value: "Mahajan2022"})
 viewof methody = Inputs.radio(["Mahajan2022", "PAINTOR", "SuSiEx"], {label: "Method Y", value: "SuSiEx"})
 viewof locus = Inputs.select(Object.keys(susiex_pips), {label:"Locus"})
-//viewof xslider = Inputs.range([0,1], {label: "X slider"})
-//max_x = Math.pow(xslider,10)
-//viewof yslider = Inputs.range([0,1], {label: "Y slider"})
-//max_y = Math.pow(yslider,10)
+viewof xslider = Inputs.range([0,1], {label: "X slider"})
+max_x = Math.pow(xslider,10)
+viewof yslider = Inputs.range([0,1], {label: "Y slider"})
+max_y = Math.pow(yslider,10)
 viewof xyline = Inputs.toggle({label: "x=y line"})
 viewof consistent_axes = Inputs.toggle({label: "Consistent Axes"})
 
@@ -143,8 +144,8 @@ plot_data = [
 
 //plot_data
 //plot_data[0]
-max_x = Math.max(...plot_data[0]);
-max_y = Math.max(...plot_data[1]);
+//max_x = Math.max(...plot_data[0]);
+//max_y = Math.max(...plot_data[1]);
 max_xy = Math.max(max_x, max_y);
 //max_xy
 Plot.plot({

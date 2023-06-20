@@ -126,7 +126,7 @@ ld_calc <- function(gds_file, rs_ids, sample_ids=NULL, ref_alleles=NULL, outfile
   seqSetFilterAnnotID(gds_file, rs_ids)
   if(!is.null(sample_ids)) seqSetFilter(gds_file, sample.id = sample_ids, action="intersect")
 
-  tmp_filename <- "/tmp/snpgds_format_file3.gds"
+  tmp_filename <- "/tmp/snpgds_format_file.gds"
   seqGDS2SNP(gds_file, tmp_filename, compress.geno="", compress.annotation="")
   tmp <- snpgdsOpen(tmp_filename, readonly=F)
   #print(paste(identical(read.gdsn(index.gdsn(tmp,"snp.rs.id")), seqGetData(gds_file,"annotation/id")))) # TRUE
@@ -155,8 +155,8 @@ ld_calc <- function(gds_file, rs_ids, sample_ids=NULL, ref_alleles=NULL, outfile
 # Note: it doesn't (and shouldn't!) matter that the seqSetFilterChrom filter from before is still active.
 
 ld_rsid_orders <-
-  lapply(       loci_configs$locus,     function(l) {
-  lapply(unique(data_configs$ancestry), function(anc) {
+  sapply(       loci_configs$locus,     simplify=F, function(l) {
+  sapply(unique(data_configs$ancestry), simplify=F, function(anc) {
     samples_of_an_ancestry <- samples_of_each_ancestry[[anc]]
     sumstats_of_an_ancestry <- subset_sumstatss[[l]][which(data_configs$ancestry == anc)]
     common_rsids_in_sumstats_of_an_ancestry <- Reduce(union, lapply(sumstats_of_an_ancestry, '[', j=rsid))
@@ -171,13 +171,13 @@ ld_rsid_orders <-
     ld_calc(ref, rs_ids = common_rsids_in_sumstats_of_an_ancestry,
              sample_ids = samples_of_an_ancestry,
             ref_alleles = ref_alleles,
-           outfile_name = paste0("in/ld/",l,"-",anc,".ld.gz")       ) 
+           outfile_name = paste0("in/ld/",l,"-",anc,".ld.gz"),
+              n_threads = 6L) 
   
     common_rsids_in_sumstats_of_an_ancestry # Return the order of the LD mat's rows/cols, important!
 })})
-names(ld_rsid_orders) <- loci_configs$locus
 
-save(ld_rsid_orders, file="in/ld/ld_rsid_orders.RData")
+save(ld_rsid_orders, file="in/ld/ld_rsid_orders.RData") # TODO: Save as separate files, with one col of just rsids? This way, LD could be used by non-R programs more easily.
 ```
 
 # Run Fine-Mapping Methods
@@ -194,7 +194,7 @@ lapply(loci_configs$locus, function(l) {
 mapply(subset_sumstatss[[l]], names(sumstats), FUN=function(s, nm) {
   s <- s[, .(chr,pos,rsid,a0,a1,b,se,p)]
   setnames(s, old="b", new="BETA", skip_absent=T)
-  fwrite(s, paste0("in/susiex/",l,"-",nm), sep=' ') # TODO: hardcoded for my data. Really easy to not hardcode. Just trying to think of elegant names for user's input data files. But might be impossible.
+  fwrite(s, paste0("in/susiex/",l,"-",nm), sep='\t') # TODO: hardcoded for my data. Really easy to not hardcode. Just trying to think of elegant names for user's input data files. But might be impossible.
 })})
 ```
 
@@ -207,14 +207,15 @@ mapply(subset_sumstatss[[l]], names(sumstats), FUN=function(s, nm) {
 ```{r}
 if(!dir.exists("out/susiex")) dir.create("out/susiex", recursive=T)
 lapply(1:nrow(loci_configs), function(r) {
-  system(paste("python3 ../third_party/SuSiEx/SuSiEx.py",
+  system(paste("../third_party/SuSiEx/bin/SuSiEx",
                "--sst_file", paste(collapse=',', paste0("in/susiex/",loci_configs[r,locus],"-",names(sumstats))),
                "--n_gwas",   paste(collapse=',', data_configs$n),
-               "--ld_file",  paste(collapse=',', paste0("in/ld/",data_configs$ancestry,"-susiex")), # TODO: hardcoded for my one-ancestry-per-dataset data. Also, not adding locus to the name was not a mistake, it is to reduce disk usage for now before I move to project folder
+               "--ld_file",  paste(collapse=',', paste0("in/ld/",loci_configs[r,locus],"-",unique(data_configs$ancestry),"-susiex")), # TODO: BEFORE RUNNING ALL LOCI, figure out elegant way to put in project folder. Symbolic link didn't work last I checked :(
                "--ref_file ../data/ref/1kg/plink_format/eas/g1000_eas,../data/ref/1kg/plink_format/eur/g1000_eur,../data/ref/1kg/plink_format/sas/g1000_sas", # TODO:
                "--plink plink", # TODO:
                "--out_dir out/susiex/",
-               "--out_name", loci_configs[r,locus], # TODO:
+               "--out_name", loci_configs[r,locus],
+               "--level 0.99",
                "--chr ", loci_configs[r,chr],
                "--bp ", paste(sep=',', loci_configs[r,pos_min], loci_configs[r,pos_max]),
                "--chr_col", paste(collapse=',', rep(1,nrow(data_configs))),
@@ -225,11 +226,11 @@ lapply(1:nrow(loci_configs), function(r) {
                "--eff_col", paste(collapse=',', rep(6,nrow(data_configs))),
                "--se_col",  paste(collapse=',', rep(7,nrow(data_configs))),
                "--pval_col",paste(collapse=',', rep(8,nrow(data_configs))),
-               "--maf 0.005", # Default. TODO: if set to 0, crashes—why?
+               "--maf 0.05", # Default. TODO:
                "--mult-step True",
                "--keep-ambig True",
-               "--full_out True"
-               # defaults: --max_iter=100, --pval_thresh=1e-5, --tol=1e-4, --n_sig=5, --level=95%, --min_purity=0.5
+               "--threads", 6L # TODO: more general
+               # defaults: --max_iter=100, --pval_thresh=1e-5, --tol=1e-4, --n_sig=5, --min_purity=0.5
   ))
 })
 ```
