@@ -2,6 +2,7 @@ data
 *.gds
 *.ld
 *.gz
+*.RData
 
 *.html
 *.rmarkdown

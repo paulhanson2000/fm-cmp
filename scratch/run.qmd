@@ -18,15 +18,15 @@ library(SNPRelate)
 # Data
 ```{r}
 data_configs <- fread("data.config")
-loci_configs <- fread("locus.config") # REMINDER TO SELF: you're designing it this way instead of just running the script multiple times for each locus b/c then would be loading data multiple times.
+loci_configs <- fread("loci.config")
+anno_configs <- fread("anno.config")
 ```
 ## Summary stats
 ```{r}
 #| output: false
 # TODO: Read only the parts of sumstats that are needed. I.e. Read only within the chr and pos ranges, AND eaf, compute from that what rows are necessary to read, and only read those. Small memory+timesave but as I only have 3 small-ish datasets for now, focus on optimizations elsewhere.
   # Alternatively use cmd="awk <stuff>", but that would hurt Windows compatability.
-  # NOTE TO SELF: peace of mind: this optimization will require no rewriting of the downstream code after it's implemented, because seqSetFilterChrom() and rsids %in% later takes care of it.
-    # If you added that extra line filtering out EAF == 0, then yeah that one line could be removed after this optim is done though. BUT actually, keep it for clarity, even if it's repeated.
+# TODO: Make chr a factor?
 sumstats <- lapply(1:nrow(data_configs), function(r) {
   sumstat          <-       data_configs[r, fread(filepath, select=c(chr_col, pos_col, rsid_col, other_allele_col, effect_allele_col, eaf_col, b_col, se_col, z_col, p_col))]
   unspecified_cols <- is.na(data_configs[r,                        .(chr_col, pos_col, rsid_col, other_allele_col, effect_allele_col, eaf_col, b_col, se_col, z_col, p_col)])
@@ -36,6 +36,7 @@ sumstats <- lapply(1:nrow(data_configs), function(r) {
   if(data_configs[r, is.na(z_col) & !is.na(b_col) & !is.na(se_col)]) sumstat[, z := b/se]
   # TODO: s/t s/t complete.cases or w/e to deal w/ remaining NAs, stop if one of the datasets is invalid, b/c surely the user wouldn't want it to run a/w, and it would help the code be cleaner if I could assume all datasets are valid.
   # TODO: Ano/ thing to check is that a dataset's ancestry exists in the reference panel.
+  # TODO: Add N col input (per-snp N), and reverse-engineer N from p/z/se/af if n_col not given.
 })
 names(sumstats) <- basename(data_configs$filepath)
 ```
@@ -84,7 +85,7 @@ sumstats <- mapply(sumstats, data_configs$ancestry, SIMPLIFY=F,
     ancestry_MAF <- ancestry_MAFs[[anc]]
     seqSetFilter(ref, action = "push+intersect", variant.sel = ancestry_MAF>0)
     s <- s[rsid %in% seqGetData(ref,"annotation/id")]
-    #print(sapply(seetFilter(ref),sum))
+    #print(sapply(seqGetFilter(ref),sum))
     seqFilterPop(ref)
     #print(sapply(seqGetFilter(ref),sum))
     s
@@ -94,6 +95,59 @@ sumstats <- mapply(sumstats, data_configs$ancestry, SIMPLIFY=F,
   # Also just filter by EAF during data loading. But this may be good to keep for explicitness as it surely has negligible performance cost at this point after filtering
 sumstats <- lapply(sumstats, '[', eaf>0 & eaf<1)
 sumstats <- lapply(sumstats, '[', order(rsid)) # Note that after subsetting, things will remain sorted (useful fact).
+
+#save(sumstats, samples_of_each_ancestry, file="filtered_sumstats.RData")
+```
+
+## Annotation
+### Add Annotation Columns
+```{r}
+# TODO: Just using PAINTOR's script b/c it's pretty fast, but would be more elegant to do this in R not system calls to Python
+anno_colss <- mapply(sumstats, 1:length(sumstats), SIMPLIFY=F, FUN = function(sumstat,i) {
+  sumstat$chr <- paste0("chr",sumstat$chr)
+  fwrite(sumstat, paste0("~/scratch/sumstat",i), sep=' ')
+
+  writeLines(anno_configs$bed_file, "anno.config.tmp")
+
+  if(!dir.exists("py_env")) system("virtualenv py_env; source py_env/bin/activate; pip3 install numpy")
+  system(paste0("source py_env/bin/activate; python3 ../third_party/PAINTOR_V3.0/PAINTOR_Utilities/AnnotateLocus.py -o ~/scratch/anno_cols.txt -c chr -p pos -i anno.config.tmp -l ~/scratch/sumstat",i))
+
+  anno_cols <- fread("~/scratch/anno_cols.txt")
+  names(anno_cols) <- anno_configs$name
+
+  unlink("anno.config.tmp")
+  unlink("~/scratch/anno_cols.txt")
+  unlink(paste0("~/scratch/sumstat",i))
+  anno_cols 
+})
+lapply(anno_colss,lapply,sum) # Make sure everything isn't just 0
+sumstats <- mapply(sumstats, anno_colss, SIMPLIFY=F, FUN=cbind)
+```
+
+### fgwas
+```{r}
+if(!dir.exists("in/fgwas")) dir.create("in/fgwas")
+if(!dir.exists("out/fgwas")) dir.create("out/fgwas")
+
+# TODO: Use "-fine" option, add SEGNUMBER col, factor per locus, and remember to sort by it. Use loci_configs$pos_min/max
+mapply(sumstats, names(sumstats), SIMPLIFY=F, FUN=function(s, s_nm) {
+  s <- s[, .SD, .SDcols=c( "rsid","chr","pos","z","se",anno_configs$name)]
+  setnames(s,           c("SNPID","CHR","POS","Z","SE",anno_configs$name))
+                               # fgwas requires specific header names.
+  s <- s[order(CHR,POS)]       # fgwas requires ordering by chr and pos.
+  s[,chr := paste0("chr",CHR)] # fgwas uses hg19 "chr#" syntax, not just the number.
+  s[,`:=`(F=0, N=0)]           # fgwas errors if missing F or N col, even though overridden by SE.
+
+  input_filename <- paste0("in/fgwas/",s_nm,"-fgwas.gz")
+  fwrite(s, input_filename, sep=' ', compress="gzip")
+
+  lapply(anno_configs$name, function(anno) {
+    system(paste0("../third_party/fgwas/src/fgwas -i ", input_filename,
+                  " -w ", anno,
+                  " -k 1000",
+                  " -o out/fgwas/",s_nm,"-",anno))
+  })
+})
 ```
 
 ## Subset
@@ -102,9 +156,9 @@ Split the summary stats into sets of subsets, one per locus.
 subset_sumstatss <- lapply(1:nrow(loci_configs), function(r) {
                     lapply(         sumstats,    function(s) {
 
-  s[chr == loci_configs[r,chr]     &
-    pos >  loci_configs[r,pos_min] &
-    pos <  loci_configs[r,pos_max] ]
+  s[ chr == loci_configs[r,chr]     &
+     pos >  loci_configs[r,pos_min] &
+     pos <  loci_configs[r,pos_max] ]
 })})
 names(subset_sumstatss) <- loci_configs$locus
 ```
@@ -119,7 +173,7 @@ This is more space-efficient than calculating LD per dataset per locus, assuming
 # Signed Pearson correlation.
 # Returned LD matrix's rows/cols are sorted to match the order of the given rs_ids.
 # Filters on the GDS file ~are~ taken into account. The GDS file will be returned with the same filters as before.
-ld_calc <- function(gds_file, rs_ids, sample_ids=NULL, ref_alleles=NULL, outfile_name=NULL, n_threads=parallel::detectCores()) {
+ldCalc <- function(gds_file, rs_ids, sample_ids=NULL, ref_alleles=NULL, outfile_name=NULL, n_threads=parallel::detectCores()) {
   if(is.null(ref_alleles)) warning("calc_ld() warning: specifying your data's ref_alleles is highly recommended! If the reference alleles (i.e. non-effect alleles) in your data =/= those in the reference panel, the LD will be incorrect.")
   seqFilterPush(gds_file) # Save user's prexisting filter on the file if they have one
 
@@ -168,7 +222,7 @@ ld_rsid_orders <-
     #print(paste(identical(a_sumstat_of_an_ancestry$rsid, common_rsids_in_sumstats_of_an_ancestry)))
     ref_alleles <- a_sumstat_of_an_ancestry$a0
 
-    ld_calc(ref, rs_ids = common_rsids_in_sumstats_of_an_ancestry,
+    ldCalc(ref, rs_ids = common_rsids_in_sumstats_of_an_ancestry,
              sample_ids = samples_of_an_ancestry,
             ref_alleles = ref_alleles,
            outfile_name = paste0("in/ld/",l,"-",anc,".ld.gz"),
@@ -194,7 +248,7 @@ lapply(loci_configs$locus, function(l) {
 mapply(subset_sumstatss[[l]], names(sumstats), FUN=function(s, nm) {
   s <- s[, .(chr,pos,rsid,a0,a1,b,se,p)]
   setnames(s, old="b", new="BETA", skip_absent=T)
-  fwrite(s, paste0("in/susiex/",l,"-",nm), sep='\t') # TODO: hardcoded for my data. Really easy to not hardcode. Just trying to think of elegant names for user's input data files. But might be impossible.
+  fwrite(s, paste0("in/susiex/",l,"-",nm), sep='\t')
 })})
 ```
 
@@ -206,16 +260,16 @@ mapply(subset_sumstatss[[l]], names(sumstats), FUN=function(s, nm) {
 ### Run SuSiEx
 ```{r}
 if(!dir.exists("out/susiex")) dir.create("out/susiex", recursive=T)
-lapply(1:nrow(loci_configs), function(r) {
+err <- lapply(1:nrow(loci_configs), function(r) {
   system(paste("../third_party/SuSiEx/bin/SuSiEx",
                "--sst_file", paste(collapse=',', paste0("in/susiex/",loci_configs[r,locus],"-",names(sumstats))),
                "--n_gwas",   paste(collapse=',', data_configs$n),
-               "--ld_file",  paste(collapse=',', paste0("in/ld/",loci_configs[r,locus],"-",unique(data_configs$ancestry),"-susiex")), # TODO: BEFORE RUNNING ALL LOCI, figure out elegant way to put in project folder. Symbolic link didn't work last I checked :(
+               "--ld_file",  paste(collapse=',', paste0("in/ld/",loci_configs[r,locus],"-",unique(data_configs$ancestry),"-susiex")), # TODO: compute own LD
                "--ref_file ../data/ref/1kg/plink_format/eas/g1000_eas,../data/ref/1kg/plink_format/eur/g1000_eur,../data/ref/1kg/plink_format/sas/g1000_sas", # TODO:
                "--plink plink", # TODO:
-               "--out_dir out/susiex/",
+               "--out_dir out/susiex",
                "--out_name", loci_configs[r,locus],
-               "--level 0.99",
+               #"--level 0.95", # Default
                "--chr ", loci_configs[r,chr],
                "--bp ", paste(sep=',', loci_configs[r,pos_min], loci_configs[r,pos_max]),
                "--chr_col", paste(collapse=',', rep(1,nrow(data_configs))),
@@ -226,13 +280,15 @@ lapply(1:nrow(loci_configs), function(r) {
                "--eff_col", paste(collapse=',', rep(6,nrow(data_configs))),
                "--se_col",  paste(collapse=',', rep(7,nrow(data_configs))),
                "--pval_col",paste(collapse=',', rep(8,nrow(data_configs))),
-               "--maf 0.05", # Default. TODO:
+               # "--maf 0.05", # Default. TODO: 0 is not allowed, but I'd like to understand why, conceptually. Maybe just b/c in their code the filter is >= instead of >, so "--maf 0" would include 0 which is not good.
+               #"--min_purity 0.5", # Default. Even if some credsets are impure and not practically useful, still want all the posteriors for comparison purposes. TODO: Purity filter of 0 causes errors for some loci, see daily note 230621. 0.01 is totally low enough but it not being 0 still bothering me. Low priorty to look into.
                "--mult-step True",
                "--keep-ambig True",
-               "--threads", 6L # TODO: more general
-               # defaults: --max_iter=100, --pval_thresh=1e-5, --tol=1e-4, --n_sig=5, --min_purity=0.5
+               "--threads", 6L # TODO: make more general, or allow input
+               # defaults: --max_iter=100, --pval_thresh=1e-5, --tol=1e-4, --n_sig=5
   ))
 })
+# TODO: use "err" to print a warning if SuSiEx fails for some loci, and specify the loci.
 ```
 
 ## PAINTOR

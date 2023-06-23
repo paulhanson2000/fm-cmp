@@ -52,6 +52,7 @@ cd -
 # PAINTOR
 cd ./third_party/PAINTOR_V3.0/
 if ! [ -f PAINTOR ]; then
+  2to3 -wn PAINTOR_Utilities/AnnotateLocus.py
   chmod u+x install.sh
   ./install.sh
 fi

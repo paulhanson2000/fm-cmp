@@ -21,12 +21,12 @@ Also loading `tmp` is a slowdown... smarter way of translating chrposIDs -> rsid
 ```{r}
 #| cache: true 
 loci_configs <- fread("locus.config")
-credset_files <- paste0("../data/DIAMANTE2022/fine_mapping/", list.files("../data/DIAMANTE2022/fine_mapping/", pattern="finemap."))
-credset_files <- sapply(loci_configs$locus, simplify=F, function(l) grep(l, credset_files, value=T)) # NOTE: one locus can have multiple credset files.
+result_files <- paste0("../data/DIAMANTE2022/fine_mapping/", list.files("../data/DIAMANTE2022/fine_mapping/", pattern="finemap."))
+result_files <- sapply(loci_configs$locus, simplify=F, function(l) grep(l, result_files, value=T)) # NOTE: one locus can have multiple credset files.
 
 # Read all credset files per locus. List of list of datatables.
 mahajan_results <- sapply(loci_configs$locus, simplify=F, function(l)
-                   sapply(credset_files[[l]], simplify=F, function(f)
+                   sapply(result_files[[l]], simplify=F, function(f)
                      fread(f, select=c(      "ID","POST"), # Have to translate to rsids :(
                            col.names=c("chrposID","pip" ))
                    ))
@@ -56,23 +56,28 @@ mahajan_results <- lapply(mahajan_results, function(mr) {
 
 ## PAINTOR
 ```{r}
-credset_files <- paste0("out/paintor/", list.files("out/paintor/", pattern=".results"))
-credset_files <- credset_files[!grepl("LogFile", credset_files)]
-paintor_results <- lapply(credset_files, fread, select=c("rsid", "Posterior_Prob"),
+#| cache: false
+result_files <- paste0("out/paintor/", list.files("out/paintor/", pattern=".results"))
+result_files <- result_files[!grepl("LogFile", result_files)]
+paintor_results <- lapply(result_files, fread, select=c("rsid", "Posterior_Prob"),
                                              col.names=c("rsid",       "pip"     ))
-names(paintor_results) <- sub("out/paintor/(.*).results", "\\1", credset_files)
+names(paintor_results) <- sub("out/paintor/(.*).results", "\\1", result_files)
 ```
 ## SuSiEx
 ```{r}
-# TODO: update to read SuSiEx 1.1 results. --full_out is no longer an option, so take the max of the PIPs in all credsets for each SNP in the .snp file.
-credset_files <- paste0("out/susiex/", list.files("out/susiex/", pattern=".cs")) 
-susiex_results <- lapply(credset_files, fread, select=c("SNP", "OVRL_PIP"),
-                                            col.names=c("rsid", "pip"  ))
-names(susiex_results) <- sub("out/susiex/(.*).cs", "\\1", credset_files)
+#| cache: false
+result_files <- paste0("out/susiex/", list.files("out/susiex/", pattern=".snp")) 
+susiex_results <- lapply(result_files, function(f) {
+  header <- fread(f, nrow=1, header=F)
+  pip_colnames <- unname(grep("PIP", header, value=T))
+  if(length(pip_colnames)==0) return( fread(f, select="SNP", col.names="rsid")[,pip := 0] )
 
-# Take only max PIP per ID in case of duplicated IDs.
-# IDs may be duplicated becuase SuSiEx puts multiple credsets in one .cs file, where which credset a record belongs to is specified by the CS_ID col.
-susiex_results <- lapply(susiex_results, '[', i=order(-pip), j=.SD[1], by=rsid) 
+  susiex_result <- fread(f, select=c("SNP", pip_colnames))
+  susiex_result <- susiex_result[, .SDcols = pip_colnames, pip := max(.SD), by=1:nrow(susiex_result)]
+  susiex_result <- susiex_result[, (pip_colnames) := NULL]
+  setnames(susiex_result, old="SNP", new="rsid")
+})
+names(susiex_results) <- sub("out/susiex/(.*).snp", "\\1", result_files)
 ```
 
 # Prep Results for JS
@@ -124,11 +129,11 @@ plot(rnorm(100),runif(100))
 viewof methodx = Inputs.radio(["Mahajan2022", "PAINTOR", "SuSiEx"], {label: "Method X", value: "Mahajan2022"})
 viewof methody = Inputs.radio(["Mahajan2022", "PAINTOR", "SuSiEx"], {label: "Method Y", value: "SuSiEx"})
 viewof locus = Inputs.select(Object.keys(susiex_pips), {label:"Locus"})
-viewof xslider = Inputs.range([0,1], {label: "X slider"})
+viewof xslider = Inputs.range([0,1], {label: "X slider", value: 1})
 max_x = Math.pow(xslider,10)
-viewof yslider = Inputs.range([0,1], {label: "Y slider"})
+viewof yslider = Inputs.range([0,1], {label: "Y slider", value: 1})
 max_y = Math.pow(yslider,10)
-viewof xyline = Inputs.toggle({label: "x=y line"})
+viewof xyline = Inputs.toggle({label: "x=y line", value: true})
 viewof consistent_axes = Inputs.toggle({label: "Consistent Axes"})
 
 method_results = ({
