@@ -38,4 +38,5 @@ Rscript get_r_pkgs.R
 ```
 # TODO
 Document how to get a GitHub token to be allowed to download more stuff, may be required for the R packages hosted on GitHub
+Document in a Misc. section or s/t: Tip: LD data is big. If you are on a Linux compute cluster, you recommended to make the in/ld directory a symbolic link to your cluster's scratch space.
 <WIP>
