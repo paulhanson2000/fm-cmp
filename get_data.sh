@@ -54,3 +54,12 @@ mv g1000_eur* eur/
 mv g1000_sas* sas/
 
 cd -
+
+# TOPMED reference (freeze8)
+## Variant info, incluing ancestry-specific AFs
+mkdir -p ./data/ref/topmed/topld/anno/
+cd       ./data/ref/topmed/topld/anno/
+parallel -t -j 3 curl -O ::: http://topld.genetics.unc.edu/downloads/downloads/EAS/SNV/EAS_chr[1-22]_no_filter_0.2_1000000_info_annotation.csv.gz \
+                             http://topld.genetics.unc.edu/downloads/downloads/EUR/SNV/EUR_chr[1-22]_no_filter_0.2_1000000_info_annotation.csv.gz \
+                             http://topld.genetics.unc.edu/downloads/downloads/SAS/SNV/SAS_chr[1-22]_no_filter_0.2_1000000_info_annotation.csv.gz
+cd -

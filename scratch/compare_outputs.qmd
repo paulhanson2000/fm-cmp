@@ -20,7 +20,7 @@ TODO: comparing against Mahajan results hardcoded for this particular project, m
 Also loading `tmp` is a slowdown... smarter way of translating chrposIDs -> rsids?
 ```{r}
 #| cache: true 
-loci_configs <- fread("locus.config")
+loci_configs <- fread("config.loci")
 result_files <- paste0("../data/DIAMANTE2022/fine_mapping/", list.files("../data/DIAMANTE2022/fine_mapping/", pattern="finemap."))
 result_files <- sapply(loci_configs$locus, simplify=F, function(l) grep(l, result_files, value=T)) # NOTE: one locus can have multiple credset files.
 

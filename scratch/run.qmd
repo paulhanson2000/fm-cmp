@@ -10,24 +10,22 @@ library(data.table)
 library(SeqArray) # TODO: technically don't need this unless using 1kG, so load later.
 library(SNPRelate)
 ```
-```{r}
-#| include: false
-"%ni%" <- Negate("%in%")
-```
 
 # Data
 ## Config files
 ```{r}
-data_configs <- fread("data.config")
-loci_configs <- fread("loci.config")
-anno_configs <- fread("anno.config")
+data_configs <- fread("config.data")
+loci_configs <- fread("config.loci")
+anno_configs <- fread("config.anno")
 ```
 
 ## Verify input is valid
 ```{r}
+"%ni%" <- Negate("%in%")
 # TODO: Why? Because it helps the rest of the code be cleaner if I can assume all input datasets are valid, and error messages early save the user time.
   # For each row in data_configs, check which columns are specified for each dataset to make sure everything that's required is there.
   # Make sure every dataset's ancestry is a valid ancestry in the reference panel too
+  # Use fread(nrows=2) or s/t to check that the data type of each column is reasonable.
 ```
 
 ## Summary stats
@@ -38,7 +36,7 @@ sumstats <- lapply(1:nrow(data_configs), function(r) {
   chr_col  <- data_configs[r,chr_col]
   pos_col  <- data_configs[r,pos_col]
 
-  # AWK command to give to fread(). Only loads the necessary variants from file, excluding those not in any locus from loci.config.
+  # AWK command to give to fread(). Only loads the necessary variants from file, excluding those not in any locus from config.loci.
   # Why? Because if your data is huge but you only care to look at a few regions, this saves time and memory.
   chr_pos_preprocess_cmd <- paste0(
     "awk ",
@@ -60,6 +58,7 @@ sumstats <- lapply(1:nrow(data_configs), function(r) {
     "}' ",
     filepath
   )
+  # TODO: filter by EAF here, or...? Put at the end of the if statement if you do b/c it's not often. or could just do when filtering for maf. it's not many vars w/ 0 so it doesn't hurt to calc ld for a few extra vars i guess
 
   sumstat <- data_configs[r, fread(cmd = chr_pos_preprocess_cmd,
                                     select=c(chr_col, pos_col, rsid_col, other_allele_col, effect_allele_col, eaf_col, b_col, se_col, z_col, p_col))]
@@ -75,6 +74,17 @@ names(sumstats) <- basename(data_configs$filepath)
 ```
 
 ## Reference panel
+### TOPMed
+```{r}
+# want to filter by maf. but needd to request all info b4 that for topmed... which is a lot... wish coul ask only for maf, filter, THEN get rest of ata.
+writeLines(sumstats[[1]]$rsid[1:100], "tmptopld.txt")
+# TODO: ok this is gonna take 10mil years, already took idk over 5 mins w/ just 100 variants.
+  # Instead, DL all the raw unfiltered INFO files for e/t, would be faster maybe? And then filter by MAF, and THEN request LD.
+
+system(paste("../third_party/topld_api/topld_api -inFile tmptopld.txt -outputInfo outputInf.txt"))
+```
+
+### 1kG
 ```{r}
 #| output: false
 # TODO: Hardcoded to use 1kG for now. Possibly support TOPMed later.
@@ -109,7 +119,7 @@ ancestry_MAFs <- lapply(samples_of_each_ancestry, function(samples_of_an_ancestr
 }) 
 seqResetFilter(ref, variant=F)
 
-invisible(sapply(data_configs$ancestry, function(anc) if(anc %ni% names(ancestry_MAFs)) { print(paste("ERROR: Ancestry",anc,"mentioned in data.config is not an ancestry in the reference panel:", paste(collapse=", ", names(ancestry_AFs)), "\nPlease remove this dataset from data.config, or if this was just a typo, change the ancestry name to match one of those in the reference panel.")); stop() })) # TODO: this belongs earlier, when loading in the data. But a nice sanity check to have for now.
+invisible(sapply(data_configs$ancestry, function(anc) if(anc %ni% names(ancestry_MAFs)) { print(paste("ERROR: Ancestry",anc,"mentioned in config.data is not an ancestry in the reference panel:", paste(collapse=", ", names(ancestry_AFs)), "\nPlease remove this dataset from config.data, or if this was just a typo, change the ancestry name to match one of those in the reference panel.")); stop() })) # TODO: this belongs earlier, when loading in the data. But a nice sanity check to have for now.
 
 # For each sumstat, keep only variants with MAF > 0 for the sumstat's ancestry.
 # Reference panel used to calculate MAF.
@@ -141,15 +151,15 @@ anno_colss <- mapply(sumstats, 1:length(sumstats), SIMPLIFY=F, FUN = function(su
   sumstat$chr <- paste0("chr",sumstat$chr)
   fwrite(sumstat, paste0("~/scratch/sumstat",i), sep=' ')
 
-  writeLines(anno_configs$bed_file, "anno.config.tmp")
+  writeLines(anno_configs$bed_file, "config.anno.tmp")
 
   if(!dir.exists("py_env")) system("virtualenv py_env; source py_env/bin/activate; pip3 install numpy")
-  system(paste0("source py_env/bin/activate; python3 ../third_party/PAINTOR_V3.0/PAINTOR_Utilities/AnnotateLocus.py -o ~/scratch/anno_cols.txt -c chr -p pos -i anno.config.tmp -l ~/scratch/sumstat",i))
+  system(paste0("source py_env/bin/activate; python3 ../third_party/PAINTOR_V3.0/PAINTOR_Utilities/AnnotateLocus.py -o ~/scratch/anno_cols.txt -c chr -p pos -i config.anno.tmp -l ~/scratch/sumstat",i))
 
   anno_cols <- fread("~/scratch/anno_cols.txt")
   names(anno_cols) <- anno_configs$name
 
-  unlink("anno.config.tmp")
+  unlink("config.anno.tmp")
   unlink("~/scratch/anno_cols.txt")
   unlink(paste0("~/scratch/sumstat",i))
   anno_cols 

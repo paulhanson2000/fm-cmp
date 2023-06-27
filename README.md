@@ -25,11 +25,14 @@ source get_modules_FOR_COMPUTE_CLUSTER_PEOPLE.sh
 If you are not on a cluster, you will need to get the following dependencies yourself:
 + [R](https://cran.r-project.org/mirrors.html) (tested on: version 4.2.2 (works))
 + [Python](https://www.python.org/) (tested on: version 3.11.2 (works), 3.8.10 (fails))
++ [Quarto](https://quarto.org/docs/get-started/) (to render code documents)
 + [Boost](https://www.boost.org/) (for fgwas)
 + [GSL](https://www.gnu.org/software/gsl/) (for MsCAVIAR)
 + [LAPACK](https://www.netlib.org/lapack/#_software) (for MsCAVIAR)
 
-You will also need to install [Quarto](https://quarto.org/docs/get-started/) to render certain plots.
+TODO, rm if not use gnomAD
++ [Rust](https://www.rust-lang.org/) (for the Python package Hail, if you wish to use gnomAD reference LD)
++ Java 8 or 11 (for Hail)
 
 To download data and the required R packages, run the following. Only needs to be done once.
 ```{bash}
@@ -38,5 +41,7 @@ Rscript get_r_pkgs.R
 ```
 # TODO
 Document how to get a GitHub token to be allowed to download more stuff, may be required for the R packages hosted on GitHub
-Document in a Misc. section or s/t: Tip: LD data is big. If you are on a Linux compute cluster, you recommended to make the in/ld directory a symbolic link to your cluster's scratch space.
+Document in a miscellaneous section or s/t: Tip: LD data is big. If you are on a Linux compute cluster, you recommended to make the in/ld directory a symbolic link to your cluster's scratch space.
+Emphasize that you have to run source get\_modules every time b/c that's important and easy to miss.
+
 <WIP>
