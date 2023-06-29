@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Special case for friends using Compute Canada, the data is already here. Just link to it instead of downloading.
+# Special hardcoded case just for me and friends using Compute Canada, the data is already here. Just link to it instead of downloading.
 if [ -d /lustre03/project/6074892/datasets/ ]; then
   ln -s /lustre03/project/6074892/datasets/ data
   echo "Success! The data can be found in the \"data/\" symbolic link that has been added to this directory."
@@ -55,11 +55,17 @@ mv g1000_sas* sas/
 
 cd -
 
-# TOPMED reference (freeze8)
-## Variant info, incluing ancestry-specific AFs
+# TOPMed reference (Err, the TOPLD subset of it anyways.)
+## Variant annotation info, incluing ancestry-specific AFs. Actual LD is requested over the internet during runtime.
 mkdir -p ./data/ref/topmed/topld/anno/
 cd       ./data/ref/topmed/topld/anno/
 parallel -t -j 3 curl -O ::: http://topld.genetics.unc.edu/downloads/downloads/EAS/SNV/EAS_chr[1-22]_no_filter_0.2_1000000_info_annotation.csv.gz \
                              http://topld.genetics.unc.edu/downloads/downloads/EUR/SNV/EUR_chr[1-22]_no_filter_0.2_1000000_info_annotation.csv.gz \
                              http://topld.genetics.unc.edu/downloads/downloads/SAS/SNV/SAS_chr[1-22]_no_filter_0.2_1000000_info_annotation.csv.gz
+parallel -t -j 3 gunzip -d ::: *
+# TODO: what about that "no preprocessing" philosophy for the data folder?
+head -1 EAS_chr1_* | tee -a EAS_topld_anno.csv EUR_topld_anno.csv SAS_topld_anno.csv # Header, then...
+awk 'FNR-1' EAS_chr* >> EAS_topld_anno.csv # ...combine files
+awk 'FNR-1' EUR_chr* >> EUR_topld_anno.csv
+awk 'FNR-1' SAS_chr* >> SAS_topld_anno.csv
 cd -

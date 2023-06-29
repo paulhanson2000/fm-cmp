@@ -23,5 +23,4 @@ module try-load arrow     # For PolyFun dependency pyarrow on Compute Canada
 module try-load thrift    # For PolyFun dependency pyarrow on Compute Canada
 module try-load arrow_cpp # For PolyFun dependency pyarrow on BU SCC # TODO: future self trying to install pyarrow on BU SCC: only pyarrow version 11 worked seemingly b/c I was using ComputeCanada's arrow/11.0. BU SCC arrow_cpp versions only go up to 8, so may only work w/ a different pyarrow version.
 #module try-load rpy2      # For Polyfun on BU SCC # TODO module present on BU might prevent installation, test, see if just using this module works, or install again w/ pip --ignore-installedd
-module try-load java/11 # For Hail
-module load rust        # For Hail
+#module try-load java/1.8 # For Hail TODO: r/4.2.2 requires higher Java version, so this is a conflict. Oh dear. 

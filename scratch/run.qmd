@@ -32,31 +32,30 @@ anno_configs <- fread("config.anno")
 ```{r}
 #| output: false
 sumstats <- lapply(1:nrow(data_configs), function(r) {
-  filepath <- data_configs[r,filepath]
-  chr_col  <- data_configs[r,chr_col]
-  pos_col  <- data_configs[r,pos_col]
-
-  # AWK command to give to fread(). Only loads the necessary variants from file, excluding those not in any locus from config.loci.
-  # Why? Because if your data is huge but you only care to look at a few regions, this saves time and memory.
+  # AWK command to give to fread(). Only loads the necessary variants from file (excludes those not in any config.loci locus).
+  # If your data is huge but you only care to look at a few regions, this saves memory.
   chr_pos_preprocess_cmd <- paste0(
     "awk ",
-    "-v chrs='",paste(collapse=' ', unique(loci_configs$chr)), "' ",
-    "-v mins_string='",paste(collapse=' ', unique(loci_configs$pos_min)), "' ",
-    "-v maxs_string='",paste(collapse=' ', unique(loci_configs$pos_max)), "' ",
+    "-v chrs_string='",paste(collapse=' ', loci_configs$chr),     "' ",
+    "-v mins_string='",paste(collapse=' ', loci_configs$pos_min), "' ",
+    "-v maxs_string='",paste(collapse=' ', loci_configs$pos_max), "' ",
     "'BEGIN {",
       "getline; print;", # Get header line
-      # Turn the min and max positions space-delimited strings into arrays
-      "split(mins_string,mins,\" \")",
-      "split(maxs_string,maxs,\" \")",
+      # Turn the space-delimited strings into arrays
+      "split(chrs_string, chrs, \" \");",
+      "split(mins_string, mins, \" \");",
+      "split(maxs_string, maxs, \" \");",
     "}",
     "{",
-      "for(i=1; i<=",nrow(data_configs),"; i++) {",
-        "if(index(chrs, $",chr_col,") > 0 && $",pos_col," >= mins[i] && $",pos_col," <= maxs[i]) {",
-          "print",
+      "for(i=0; i<",nrow(loci_configs),"; i++) {",
+        "if($",data_configs[r,chr_col]," == chrs[i] && ",
+           "$",data_configs[r,pos_col]," >= mins[i] && ",
+           "$",data_configs[r,pos_col]," <= maxs[i]) { ",
+          "print; break;",
         "}",
       "}",
     "}' ",
-    filepath
+    data_configs[r,filepath]
   )
   # TODO: filter by EAF here, or...? Put at the end of the if statement if you do b/c it's not often. or could just do when filtering for maf. it's not many vars w/ 0 so it doesn't hurt to calc ld for a few extra vars i guess
 
@@ -74,14 +73,59 @@ names(sumstats) <- basename(data_configs$filepath)
 ```
 
 ## Reference panel
-### TOPMed
+### (WIP) TOPMed
 ```{r}
-# want to filter by maf. but needd to request all info b4 that for topmed... which is a lot... wish coul ask only for maf, filter, THEN get rest of ata.
-writeLines(sumstats[[1]]$rsid[1:100], "tmptopld.txt")
-# TODO: ok this is gonna take 10mil years, already took idk over 5 mins w/ just 100 variants.
-  # Instead, DL all the raw unfiltered INFO files for e/t, would be faster maybe? And then filter by MAF, and THEN request LD.
+# AWK won't work here b/c files are big (10mil rows+) and I'm searching for matches for 10k's of rsids inside.
+# I suspect the awk is failing b/c I have to pass all the rsids so the shell command is too long.
+# Anyways, the efficient thing to do here is unfortunately load the whole file into memory first....
+  # Not in an lapply loop though, but a for loop.
+#ref_annos <- sapply(unique(data_configs$ancestry), simplify=F, function(anc) {
+#  filepath <- paste0("../data/ref/topmed/topld/anno/",anc,"_topld_anno.csv")
+#  sumstats_of_ancestry <- sumstats[which(data_configs$ancestry == anc)]
+#  rsids_of_ancestry <- Reduce(union, lapply(sumstats_of_ancestry, '[', j=rsid))
+#  if(anyDuplicated(rsids_of_ancestry)>0) {stop("wat")}
+#
+#  shared_rsid_preprocess_cmd <- paste0(
+#    "awk ",
+#    "-v rsids_string='",paste(collapse=' ', rsids_of_ancestry), "' ", 
+#    "'BEGIN {",
+#      "getline; print;", # Get header line
+#      "n_rsid=split(rsids_string,rsids,\" \")", # Turn the space-delimited string of rsids into an array
+#    "}",
+#    "{", # Only keep rows of rsids shared w/ the sumstats. And only keep the Position ($1) and rsID ($2) columns.
+#      "for(i=0; i<=n_rsid; i++) {",
+#        "if($2==rsids[i]) {print $1,$2}",
+#      "}",
+#      #"if(index(rsids_string, $2) > 0) {print}",
+#    "}' ",
+#    filepath
+#  )
+#  #return(shared_rsid_preprocess_cmd)
+#
+#  fread(cmd = shared_rsid_preprocess_cmd,
+#           select=c("Position","rsID"),
+#        col.names=c("pos",     "rsid"))
+#})
 
-system(paste("../third_party/topld_api/topld_api -inFile tmptopld.txt -outputInfo outputInf.txt"))
+# This is the original way, just loading whole file and then subsetting after.
+#ref_annos <- sapply(unique(data_configs$ancestry)[[1]], simplify=F, function(anc) {
+##sapply(unique(data_configs$ancestry), simplify=F, function(anc) {
+#  topld_anno_file <- paste0("../data/ref/topmed/topld/anno/",anc,"_topld_anno.csv")
+#  topld_rsids <- fread(topld_anno_file, select=c("rsID"), col.names=c("rsid"))
+#
+#  sumstats_of_ancestry <- sumstats[which(data_configs$ancestry == anc)]
+#  rsids_of_ancestry <- Reduce(union, lapply(sumstats_of_ancestry, '[', j=rsid))
+#})
+#
+## Filter sumstats by variants shared with reference of same ancestry
+#sumstats2 <- mapply(sumstats, data_configs$ancestry, SIMPLIFY=F, FUN = function(s, s_anc) {
+#  s[rsid %in% ref_annos[[s_anc]]$rsid]
+#})
+
+# Old code, reminder how to use the topld_api exe and that it just takes a file of rsids
+#writeLines(sumstats[[1]]$rsid[1:100], "tmptopld.txt")
+# Took over 5 mins already w/ just 100 variants.
+#system(paste("../third_party/topld_api/topld_api -inFile tmptopld.txt -outputInfo outputInf.txt"))
 ```
 
 ### 1kG

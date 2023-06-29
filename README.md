@@ -23,7 +23,7 @@ If you are on a compute cluster using LMod, load the required modules:
 source get_modules_FOR_COMPUTE_CLUSTER_PEOPLE.sh
 ```
 If you are not on a cluster, you will need to get the following dependencies yourself:
-+ [R](https://cran.r-project.org/mirrors.html) (tested on: version 4.2.2 (works))
++ [R](https://cran.r-project.org/mirrors.html) (tested on: version 4.2 (works))
 + [Python](https://www.python.org/) (tested on: version 3.11.2 (works), 3.8.10 (fails))
 + [Quarto](https://quarto.org/docs/get-started/) (to render code documents)
 + [Boost](https://www.boost.org/) (for fgwas)

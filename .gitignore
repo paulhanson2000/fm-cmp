@@ -18,3 +18,5 @@ third_party/finemap/
 scratch/in/
 scratch/out/
 scratch/old/results/
+
+scratch/py*
