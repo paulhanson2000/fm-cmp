@@ -7,7 +7,7 @@ toc: true
 ```{r}
 #| output: false
 library(data.table)
-library(SeqArray) # TODO: technically don't need this unless using 1kG, so load later.
+library(SeqArray) # TODO: don't need this unless using certain ref panels, so load later.
 library(SNPRelate)
 ```
 
@@ -50,7 +50,9 @@ sumstats <- lapply(1:nrow(data_configs), function(r) {
       "for(i=0; i<=",nrow(loci_configs),"; i++) {",
         "if($",data_configs[r,chr_col]," == chrs[i] && ",
            "$",data_configs[r,pos_col]," >= mins[i] && ",
-           "$",data_configs[r,pos_col]," <= maxs[i]) { ",
+           "$",data_configs[r,pos_col]," <= maxs[i] && ",
+           "$",data_configs[r,eaf_col]," >  0       && ", # TODO: make optional if user has no eaf col
+           "$",data_configs[r,eaf_col]," <  1) { ",
           "print; break;", # Print locus rsid is in as the last col
         "}",
       "}",
@@ -178,12 +180,6 @@ sumstats <- mapply(sumstats, data_configs$ancestry, SIMPLIFY=F,
     #print(sapply(seqGetFilter(ref),sum))
     s
 })
-
-# TODO: Not generalizable to sumstats where user gives no EAF column.
-  # Also just filter by EAF during data loading. But this may be good to keep for explicitness as it surely has negligible performance cost at this point after filtering
-sumstats <- lapply(sumstats, '[', eaf>0 & eaf<1)
-sumstats <- lapply(sumstats, '[', order(rsid)) # Note that after subsetting, things will remain sorted (useful fact).
-
 #save(sumstats, samples_of_each_ancestry, file="filtered_sumstats.RData")
 ```
 
@@ -213,15 +209,16 @@ lapply(anno_colss,lapply,sum) # Make sure everything isn't just 0
 sumstats <- mapply(sumstats, anno_colss, SIMPLIFY=F, FUN=cbind)
 ```
 
-### Add SEGNUMBER (locus) Column
+### Add SEGNUMBER (and locus) Column
 ```{r}
 # TODO: Could put this in the AWK preprocessing when first reading the file? But ugly. And unnecessary if user doesn't want annos.
 lapply(sumstats, function(s) {
+  s[,locus := factor(levels=loci_configs$locus)]
   lapply(1:nrow(loci_configs), function(l) {
-    s[chr == loci_configs$chr[l] &
-      pos >= loci_configs$pos_min[l] &
-      pos <= loci_configs$pos_max[l],
-    `:=`(SEGNUMBER=l, locus=loci_configs$locus[l])]
+    s[ chr == loci_configs$chr[l] &
+       pos >= loci_configs$pos_min[l] &
+       pos <= loci_configs$pos_max[l],
+       `:=`(locus=l, SEGNUMBER=l)       ]
 })})
 ```
 
@@ -242,17 +239,100 @@ mapply(sumstats, names(sumstats), SIMPLIFY=F, FUN=function(s, s_nm) {
   fwrite(s, input_filename, sep=' ', compress="gzip")
 
   lapply(anno_configs$name, function(anno) {
-    system(paste0("../third_party/fgwas/src/fgwas -i ", input_filename, " -fine",
-                  " -w ", anno,
-                  " -k 10000",
-                  " -o out/fgwas/",s_nm,"-",anno))
+    system(paste0( "../third_party/fgwas/src/fgwas -i ", input_filename, " -fine",
+                   " -w ", anno,
+                   " -o out/fgwas/",s_nm,"-",anno ))
   })
 })
+
+# Tail-recursive version
+# Function assumes sumstat is formatted properly for fgwas -fine. I.e.:
+  # has "SNPID", "CHR", "POS", "Z", "F", "N", "SE", "SEGNUMBER", and anno cols.
+    # CHR must be hg19 format, i.e. "chr#" not just "#".
+    # F and N can be blank as they are overridden by SE, but must be present nonetheless for some reason.
+  # sorted by SEGNUMBER,CHR,POS
+# P1 iteratively adds the anno which increases the model's likelihood most, until no more gain.
+getBestFgwasModelP1_recursive <- function(sumstat_filename_fgwas_compatible, annos_to_try, anno_acc, best_llk) {
+  lapply(annos_to_try, function(anno_to_try) {
+    # TODO: parallelize this fgwas call either w/ GNU parallel here or R parallel on outer fn call (including input file prep part)
+    system(paste0( "../third_party/fgwas/src/fgwas -i ", sumstat_filename_fgwas_compatible, " -fine",
+                   " -o out/fgwas/",anno_to_try,"-",sumstat_filename_fgwas_compatible,
+                   " -w ", paste(collapse='+', annos_to_try),"+",anno_to_try ))
+    llks_files <- list.files("out/fgwas/", pattern="*.llk")
+    llks <- fread(llks)[1,2] # Get ln(likelihood) output
+    names(llks) <- sub("-.*","",llks) # Should just be the anno names again. # TODO: could go wrong if user puts dashes in their anno names.
+    #stopifnot(all(annos_to_try %in% names(llks)))
+    if(max(llks) > best_llk) {
+      new_best_llk <- max(llks)
+      new_anno_acc <- c(anno_acc, names(llks)[which.max(llks)])
+      return( getBestFgwasModel(sumstat_filename_fgwas_compatible, new_anno_acc, new_best_llk) )
+    } else {return(anno_acc)}
+  })
+}
+getBestFgwasModelP1_tail_recursive <- tailr::loop_transform(getBestFgwasModelP1_recursive)
+
+# P2 tests which penalty has the best x-validation likelihood, given the model from P1.
+getBestFgwasModelP2 <- function(sumstat_filename_fgwas_compatible, annos) {
+  # TODO: IDK the stats theory well enough: will the x-validation likelihoods here have only one minimum? If so, could optimize by doing a binary search for the best penalty or s/t.
+  # TODO: either way, would be good to focus down on a minimum a little more after the best one in steps of 0.05 is found.
+  xv_llks <- lapply(seq(0,1,0.05), function(penalty) {
+    system(paste0( "../third_party/fgwas/src/fgwas -i ", sumstat_filename_fgwas_compatible,
+                   " -w ", paste(collapse='+', annos),
+                   " -p ", penalty, " -xv -print ",
+                   " -o out/fgwas/p",as.character(penalty),"-",sumstat_filename_fgwas_compatible ))
+    a <- fread(paste0( "out/fgwas/p",as.character(penalty),"-",sumstat_filename_fgwas_compatible,".ridgeparams"))
+    xv_llk <- a[,nrow(a)] # fgwas outputs the x-validation likelihood from -xv as the last line of the ridgeparams files. # TODO: is it log-likelihood or just likelihood?
+  })
+  return( list(max(xv_llks), seq(0,1,0.05)[which.max(xv_llks)]) )
+}
+
+# P3 drops annos from the model using P2's penalty, until the x-validation likelihood is maximized.
+getBestFgwasModelP3 <- function(sumstat_filename_fgwas_compatible, annos, xv_penalty, og_xv_llk) {
+  # TODO: IDK the stats theory well enough: should I try every permutation of model? Or if dropping an anno increase the x-validation likelihood of the model, it will still do so in the context of any other annotations?
+    # Here I assume that it is safe to just traverse the annotations once, since that's what the fgwas manual seems to do.
+  xv_llks <- sapply(annos, function(anno_to_drop) {
+    model_with_one_anno_dropped <- paste(collapse='+', annos[!anno_to_drop])
+    system(paste0( "../third_party/fgwas/src/fgwas -i ", sumstat_filename_fgwas_compatible,
+                   " -w ", model_with_one_anno_dropped,
+                   " -p ", penalty, " -xv -print ",
+                   " -o out/fgwas/drop_",anno_to_drop,"-",sumstat_filename_fgwas_compatible ))
+    a <- fread(paste0( "out/fgwas/drop_",anno_to_drop,"-",sumstat_filename_fgwas_compatible ))
+    xv_llk <- a[,nrow(a)]
+  })
+  names(xv_llks)[xv_llks >= og_xv_llk]
+}
+
+lapply(sumstats, function(s) {
+  s <- s[, .SD, .SDcols=c( "rsid","chr","pos","z","se","SEGNUMBER",anno_configs$name)]
+  setnames(s,           c("SNPID","CHR","POS","Z","SE","SEGNUMBER",anno_configs$name))
+                                   # fgwas requires specific header names.
+  s <- s[order(SEGNUMBER,CHR,POS)] # fgwas requires ordering by SEGNUMBER (if -fine option), and chr and pos.
+  s[,chr := paste0("chr",CHR)]     # fgwas uses hg19 "chr#" syntax, not just the number.
+  s[,`:=`(F=0, N=0)]               # fgwas errors if missing F or N col, even though overridden by SE.
+
+  input_filename <- paste0("in/fgwas/",s_nm,"-fgwas.gz")
+  fwrite(s, input_filename, sep=' ', compress="gzip")
+
+  annos   <- getBestFgwasModelP1_tail_recursive(input_filename, anno_configs$name, c(), 0)
+  l       <- getBestFgwasModelP2(input_filename, annos)
+  xv_llk  <- l[[1]]
+  penalty <- l[[2]]
+
+             getBestFgwasModelP3(input_filename, annos, penalty, xv_llk)
+})
+
+
+# Iterative version
+mapply(sumstats, names(sumstats), SIMPLIFY=F, FUN=function(s,s_nm) {
+  # Test each anno individually; find that which most improves likelihood, add, try each remaining anno indiv, repeat.
+})
+
 ```
 
 ## Subset
 Split the summary stats into sets of subsets, one per locus.
 ```{r}
+sumstats <- lapply(sumstats, '[', order(rsid)) # After subsetting, things will remain sorted (useful fact).
 subset_sumstatss <- lapply(1:nrow(loci_configs), function(r) {
                     lapply(         sumstats,    function(s) {
 
