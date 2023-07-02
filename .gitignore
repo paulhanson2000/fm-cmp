@@ -12,8 +12,9 @@ data
 
 core.*
 
-third_party/mr_mega/
 third_party/finemap/
+third_party/liftover/
+third_party/mr_mega/
 
 scratch/in/
 scratch/out/
