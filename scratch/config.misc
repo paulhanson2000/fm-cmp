@@ -1,0 +1,24 @@
+# Available LD reference panels:
+  # "1kG"    (1000 Genomes)
+  # "TOPLD"  (Consists of: BioMe, JHS, MESA, WHI)
+  # "gnomAD" (v3.1.2)
+misc_config$ref_panel = "gnomAD"
+
+# Available fine-mapping methods:
+  # (TODO) caviar
+  # (TODO) caviarbf
+  # (TODO) finemap
+  # (TODO) guessfm
+  # (TODO) ma-focus
+  # (TODO) mjam
+  # (TODO) mscaviar
+  # paintor
+  # susiex
+misc_config$fm_methods = list(
+  "caviar", "caviarbf", "finemap", "guessfm", "ma-focus", "mjam", "mscaviar", "paintor", "susiex"
+)
+
+# PAINTOR can incorporate annotation info without the help of fgwas.
+# Use this functionality, or calculate priors for PAINTOR with fgwas like the rest?
+# True or False:
+misc_config$use_paintor_anno_functionality = F
