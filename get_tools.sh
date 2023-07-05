@@ -27,18 +27,18 @@ if ! [ -f finemap/finemap_v1.4.2_x86_64 ]; then
 fi
 cd -
 
-# gsutil (for accessing gnomAD data on Google Cloud)
-mkdir -p ./third_party/gsutil/
-cd       ./third_party/gsutil/
-if ! [ -d py_env_gsutil ]; then virtualenv --no-download py_env_gsutil; fi
-source py_env_gsutil/bin/activate
-set +e; gsutil; already_have_gsutil=$?; set -e
-if [ $already_have_gsutil -ne 0 ]; then
-  python -m pip install $PIPFLAGS --upgrade pip
-  python -m pip install $PIPFLAGS gsutil
-fi
-deactivate
-cd - 
+# gsutil
+#mkdir -p ./third_party/gsutil/
+#cd       ./third_party/gsutil/
+#if ! [ -d py_env_gsutil ]; then virtualenv --no-download py_env_gsutil; fi
+#source py_env_gsutil/bin/activate
+#set +e; gsutil; already_have_gsutil=$?; set -e
+#if [ $already_have_gsutil -ne 0 ]; then
+#  python -m pip install $PIPFLAGS --upgrade pip
+#  python -m pip install $PIPFLAGS gsutil
+#fi
+#deactivate
+#cd - 
 
 # liftOver
 mkdir -p ./third_party/liftover/

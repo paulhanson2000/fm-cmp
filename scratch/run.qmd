@@ -114,6 +114,7 @@ lapply(union(data_config$ref_genome, misc_config$ref_panel_ref_genome), function
       set(lifted_loci_config, i, "chr",     lifted[,1])
       set(lifted_loci_config, i, "pos_min", lifted[,2])
       set(lifted_loci_config, i, "pos_max", lifted[,3])
+      set(lifted_loci_config, i, "ref_genome", dg)
     }
   })
   lifted_loci_config[, chr := sub("chr","",chr)] # Undo UCSC chr naming # TODO: make factor, and make a convenience chrFactor() function to use here and when reading sumstats?
