@@ -145,7 +145,7 @@ lapply(unique(data_config$ref_genome), function(dg) {
 })
 names(anno_configs) <- unique(data_config$ref_genome)
 
-# NOTE: don't worry if loci_configs' and anno_configs' ref_genome factor values are different for the same level label. They are still considered if compared across dataframes as you'd hope.
+# NOTE: don't worry if loci_configs' and anno_configs' ref_genome factor values are different for the same level label. They are still considered equal as you'd hope even compared between different data.tables.
 ```
 
 # Data
@@ -153,13 +153,17 @@ names(anno_configs) <- unique(data_config$ref_genome)
 ```{r}
 #| output: false
 sumstats <- lapply(1:nrow(data_config), function(r) {
+
+  loci <- loci_configs[[ data_config[r,ref_genome] ]] # Loci with coords lifted to the current data file's ref genome
+  loci <- loci[, chr := as.integer(sub("chr","",chr))] # TODO: hardcoded assuming data has "#" not "chr#" format, but make it so that either works (hint: I'd like to use factors with chr# labels). Sorry future self I have o/ things to do rn. Also this modifies by reference, careful, remember to use copy().
+
   # AWK command given to fread(). Only loads the necessary variants. (Excludes those not in any config.loci locus, or with EAF of 0 or 1.)
   # If your data is huge but you only care to look at a few regions, this saves memory.
   chr_pos_eaf_preprocess_cmd <- paste0(
     "awk ",
-    "-v chrs_string='",paste(collapse=' ', loci_config$chr),     "' ",
-    "-v mins_string='",paste(collapse=' ', loci_config$pos_min), "' ",
-    "-v maxs_string='",paste(collapse=' ', loci_config$pos_max), "' ",
+    "-v chrs_string='",paste(collapse=' ', loci$chr),     "' ",
+    "-v mins_string='",paste(collapse=' ', loci$pos_min), "' ",
+    "-v maxs_string='",paste(collapse=' ', loci$pos_max), "' ",
     "'BEGIN {",
       "getline; print;", # Get header line
       # Turn the space-delimited strings into arrays
@@ -168,12 +172,10 @@ sumstats <- lapply(1:nrow(data_config), function(r) {
       "split(maxs_string, maxs, \" \");",
     "}",
     "{",
-      "for(i=0; i<=",nrow(loci_config),"; i++) {",
+      "for(i=0; i<=",nrow(loci),"; i++) {",
         "if($",data_config[r,chr_col]," == chrs[i] && ",
            "$",data_config[r,pos_col]," >= mins[i] && ",
-           "$",data_config[r,pos_col]," <= maxs[i] && ",
-           "$",data_config[r,eaf_col]," >  0       && ", # TODO: make optional if user has no eaf col
-           "$",data_config[r,eaf_col]," <  1) { ",
+           "$",data_config[r,pos_col]," <= maxs[i]) { ",
           "print; break;", # Print locus rsid is in as the last col
         "}",
       "}",
@@ -182,14 +184,19 @@ sumstats <- lapply(1:nrow(data_config), function(r) {
   )
 
   sumstat <- data_config[r, fread(cmd = chr_pos_eaf_preprocess_cmd,
-                                    select=c(chr_col, pos_col, rsid_col, other_allele_col, effect_allele_col, eaf_col, b_col, se_col, z_col, p_col))]
+                                   select=c(chr_col, pos_col, rsid_col, other_allele_col, effect_allele_col, eaf_col, b_col, se_col, z_col, p_col))]
   unspecified_cols <- is.na(data_config[r,.(chr_col, pos_col, rsid_col, other_allele_col, effect_allele_col, eaf_col, b_col, se_col, z_col, p_col)])
   setnames(sumstat,                       c("chr",   "pos",   "rsid",   "a0",             "a1",              "eaf",   "b",   "se",   "z",   "p"   )[!unspecified_cols])
 
   sumstat[,chr := factor(chr,levels=c("1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18","19","20","21","22","X","Y","M"))] # TODO: make sure things will line up correctly even if user uses UCSC "chr#" naming or not.
   sumstat[,`:=`(a0=toupper(a0), a1=toupper(a1))]
+  if("eaf" %in% names(sumstat)) sumstat <- sumstat[eaf > 0 & eaf < 1]
+
+  # Infer some columns from the others if possible. For example, z-score can be calculated from β and SE.
   if(data_config[r, is.na(z_col) & !is.na(b_col) & !is.na(se_col)]) sumstat[, z := b/se]
   # TODO: Add N col input (per-snp N), and reverse-engineer N from p/z/se/af if n_col not given.
+
+  sumstat
 })
 names(sumstats) <- basename(data_config$filepath)
 ```
@@ -273,15 +280,14 @@ rm(sample_info)
 # Prep
 ## Filter
 First, filter out useless/unusable variants from the summary stats: \
-1. If variant's EAF is 0 
-2. If variant's ancestry-specific MAF is 0 for that sumstat file's ancestry
-3. If variant is not within the bounds of any loci specified in `locus.config`
-4. If variant not also present in reference panel
+1. If variant's ancestry-specific MAF is 0 for that sumstat file's ancestry
+2. If variant is not within the bounds of any loci specified in `locus.config`
+3. If variant not also present in reference panel
 ```{r}
 #| output: false
-seqSetFilterChrom(ref, loci_config$chr,
-               from.bp=loci_config$pos_min,
-                 to.bp=loci_config$pos_max)
+seqSetFilterChrom(ref, loci_configs$hg19$chr,
+               from.bp=loci_configs$hg19$pos_min,
+                 to.bp=loci_configs$hg19$pos_max)
 
 samples_of_each_ancestry <- tapply(seqGetData(ref,"sample.id"), INDEX=seqGetData(ref,"sample.annotation/ancestry"), FUN = identity) 
 ancestry_MAFs <- lapply(samples_of_each_ancestry, function(samples_of_an_ancestry) {
@@ -290,7 +296,7 @@ ancestry_MAFs <- lapply(samples_of_each_ancestry, function(samples_of_an_ancestr
 }) 
 seqResetFilter(ref, variant=F)
 
-invisible(sapply(data_config$ancestry, function(anc) if(anc %ni% names(ancestry_MAFs)) { print(paste("ERROR: Ancestry",anc,"mentioned in config.data is not an ancestry in the reference panel:", paste(collapse=", ", names(ancestry_AFs)), "\nPlease remove this dataset from config.data, or if this was just a typo, change the ancestry name to match one of those in the reference panel.")); stop() })) # TODO: this belongs earlier, when loading in the data. But a nice sanity check to have for now.
+invisible(sapply(data_config$ancestry, function(anc) if(anc %ni% names(ancestry_MAFs)) { print(paste("ERROR: Ancestry",anc,"mentioned in config.data is not an ancestry in the reference panel:", paste(collapse=", ", names(ancestry_MAFs)), "\nPlease remove this dataset from config.data, or if this was just a typo, change the ancestry name to match one of those in the reference panel.")); stop() })) # TODO: this belongs earlier, when loading in the data. But a nice sanity check to have for now.
 
 # For each sumstat, keep only variants with MAF > 0 for the sumstat's ancestry.
 # Reference panel used to calculate MAF.
@@ -396,6 +402,11 @@ getBestFgwasModelP1_recursive <- function(sumstat_filename_fgwas_compatible, ann
 }
 getBestFgwasModelP1_tail_recursive <- tailr::loop_transform(getBestFgwasModelP1_recursive)
 
+# Iterative version
+#mapply(sumstats, names(sumstats), SIMPLIFY=F, FUN=function(s,s_nm) {
+#  # Test each anno individually; find that which most improves likelihood, add, try each remaining anno indiv, repeat.
+#})
+
 # P2 tests which penalty has the best x-validation likelihood, given the model from P1.
 getBestFgwasModelP2 <- function(sumstat_filename_fgwas_compatible, annos) {
   # TODO: IDK the stats theory well enough: will the x-validation likelihoods here have only one minimum? If so, could optimize by doing a binary search for the best penalty or s/t.
@@ -445,25 +456,18 @@ lapply(sumstats, function(s) {
 
              getBestFgwasModelP3(input_filename, annos, penalty, xv_llk)
 })
-
-
-# Iterative version
-mapply(sumstats, names(sumstats), SIMPLIFY=F, FUN=function(s,s_nm) {
-  # Test each anno individually; find that which most improves likelihood, add, try each remaining anno indiv, repeat.
-})
-
 ```
 
 ## Subset
 Split the summary stats into sets of subsets, one per locus.
 ```{r}
-sumstats <- lapply(sumstats, '[', order(rsid)) # After subsetting, things will remain sorted (useful fact).
+sumstats <- lapply(sumstats, '[', order(rsid)) # Things remain sorted after subsetting.
 subset_sumstatss <- lapply(1:nrow(loci_config), function(r) {
-                    lapply(         sumstats,    function(s) {
+                    mapply(sumstats, data_config$ref_genome, SIMPLIFY=F, FUN = function(s, ref_genome) {
 
-  s[ chr == loci_config[r,chr]     &
-     pos >= loci_config[r,pos_min] &
-     pos <= loci_config[r,pos_max] ]
+  s[ chr == loci_configs[[ref_genome]][r,chr]     &
+     pos >= loci_configs[[ref_genome]][r,pos_min] &
+     pos <= loci_configs[[ref_genome]][r,pos_max] ]
 })})
 names(subset_sumstatss) <- loci_config$locus
 ```
