@@ -1,7 +1,13 @@
 #!/bin/bash
-set -e # exit if anything fails
 
-git submodule update --remote
+set -e # exit if anything fails
+git submodule update --remote # For tools hosted on GitHub, download their source
+
+# Detect if on Compute Canada. If so, will use pre-installed Python things 
+PIPFLAGS=""
+uname -n | grep calculquebec > /dev/null
+if [ $? -eq 0 ]; then PIPFLAGS="--no-index"; fi
+
 
 # fgwas
 cd ./third_party/fgwas
@@ -14,21 +20,35 @@ cd -
 # FINEMAP
 cd ./third_party/
 if ! [ -f finemap/finemap_v1.4.2_x86_64 ]; then
-  wget http://www.christianbenner.com/finemap_v1.4.2_x86_64.tgz
+  curl -O http://www.christianbenner.com/finemap_v1.4.2_x86_64.tgz
   tar -zxf finemap_v1.4.2_x86_64.tgz
   rm       finemap_v1.4.2_x86_64.tgz
   mv       finemap_v1.4.2_x86_64 finemap
 fi
 cd -
 
+# gsutil (for accessing gnomAD data on Google Cloud)
+mkdir -p ./third_party/gsutil/
+cd       ./third_party/gsutil/
+if ! [ -d py_env_gsutil ]; then virtualenv --no-download py_env_gsutil; fi
+source py_env_gsutil/bin/activate
+set +e; gsutil; already_have_gsutil=$?; set -e
+if [ $already_have_gsutil -ne 0 ]; then
+  python -m pip install $PIPFLAGS --upgrade pip
+  python -m pip install $PIPFLAGS gsutil
+fi
+deactivate
+cd - 
+
 # liftOver
 mkdir -p ./third_party/liftover/
 cd       ./third_party/liftover/
 if ! [ -f liftOver ]; then
-  wget http://hgdownload.soe.ucsc.edu/admin/exe/linux.x86_64/liftOver
+  curl -O http://hgdownload.soe.ucsc.edu/admin/exe/linux.x86_64/liftOver
   chmod +x liftOver
-  wget https://hgdownload.soe.ucsc.edu/goldenPath/hg18/liftOver/hg18ToHg38.over.chain.gz
-  wget https://hgdownload.soe.ucsc.edu/goldenPath/hg19/liftOver/hg19ToHg38.over.chain.gz
+  curl -O https://hgdownload.soe.ucsc.edu/goldenPath/hg18/liftOver/hg18ToHg19.over.chain.gz # TODO: instead of hardcoded downloads for this specific project, detect which chain files are necessary based on config files, check they're valid and download them automatically. Could be done later, in an R script, if there is internet.
+  curl -O https://hgdownload.soe.ucsc.edu/goldenPath/hg18/liftOver/hg18ToHg38.over.chain.gz
+  curl -O https://hgdownload.soe.ucsc.edu/goldenPath/hg19/liftOver/hg19ToHg38.over.chain.gz
 fi
 cd -
 
@@ -36,7 +56,7 @@ cd -
 mkdir -p ./third_party/mr_mega/
 cd       ./third_party/mr_mega/
 if ! [ -f MR-MEGA ]; then
-  wget https://tools.gi.ut.ee/tools/MR-MEGA_v0.2.zip
+  curl -O https://tools.gi.ut.ee/tools/MR-MEGA_v0.2.zip
   unzip MR-MEGA_v0.2.zip
   rm    MR-MEGA_v0.2.zip
   make
@@ -69,13 +89,17 @@ if ! [ -f PAINTOR ]; then
 fi
 cd -
 
+# TODO: major improvements to make for this install:
+  # Use --no-index (in PIPFLAGS variable)
+  # Instead of manually listing all the packages, use a requrements.txt? Or maybe that extra file would be inelegant to put somewhere, so at least use the requrements.txt to get hard verison numbers.
+  # Maybe create new pyvenvs per-job, as apparently this can be faster? (See CCDB Python docs)
 # PolyFun
 cd ./third_party/polyfun/
 if ! [ -d polyfun_py_env ]; then virtualenv polyfun_py_env; fi
 source polyfun_py_env/bin/activate
 python -c "import rpy2" # TODO: not a foolproof check but w/e
-packages_installed=$?
-if [  $packages_installed -ne 0 ]; then
+already_installed=$?
+if [  $already_installed -ne 0 ]; then
   python -m pip install --upgrade pip
   python -m pip install numpy
   python -m pip install scipy
