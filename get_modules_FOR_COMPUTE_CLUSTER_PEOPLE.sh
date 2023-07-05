@@ -11,7 +11,7 @@ module try-load python/3.11.2  # Compute Canada version
 module try-load python3/3.10.5 # BU SCC version
 
 module load plink/1.9b_6.21-x86_64 # For SuSiEx. module load plink/2.00a3.6` (plink 2.0) doesn't seem to work. TODO eventually calc ld myself and remove this
-module load htslib
+module load bcftools
 
 module load boost         # For fGWAS
 module load gsl           # For fGWAS and MsCAVIAR

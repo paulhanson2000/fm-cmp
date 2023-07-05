@@ -22,3 +22,7 @@ misc_config$fm_methods = list(
 # Use this functionality, or calculate priors for PAINTOR with fgwas like the rest?
 # True or False:
 misc_config$use_paintor_anno_functionality = F
+
+# Change this if you're not on Compute Canada!
+# Examples: Sys.getenv("SCRATCH"), "/scratch", "/tmp"
+misc_config$scratch_dir = Sys.getenv("SCRATCH")
