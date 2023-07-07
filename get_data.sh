@@ -27,7 +27,7 @@ if ! [ -d fine_mapping/ ]; then
 fi
 cd -
 
-# 1000 Genomes reference
+# 1000 Genomes reference panel
 ## Sample information (gender, ancestry)
 mkdir -p ./data/ref/1kg/sample_info/
 cd       ./data/ref/1kg/sample_info/
@@ -61,8 +61,8 @@ if ! [ -d sas/ ]; then
 fi
 cd -
 
-# TOPMed reference (Err, the TOPLD subset of it anyways.)
-## Variant annotation info, incluing ancestry-specific AFs. Actual LD is requested over the internet during runtime.
+# TOPLD reference panel
+## Variant annotation info, incluing ancestry-specific AFs.
 mkdir -p ./data/ref/topmed/topld/anno/
 cd       ./data/ref/topmed/topld/anno/
 if ! [ -f SAS_topld_anno.csv ]; then
@@ -75,6 +75,17 @@ if ! [ -f SAS_topld_anno.csv ]; then
   awk 'FNR-1' EAS_chr* >> EAS_topld_anno.csv # ...combine files
   awk 'FNR-1' EUR_chr* >> EUR_topld_anno.csv
   awk 'FNR-1' SAS_chr* >> SAS_topld_anno.csv
+
+  parallel -t -j
+fi
+
+## LD
+mkdir -p ./data/ref/topmed/topld/ld/
+cd       ./data/ref/topmed/topld/ld/
+if ! [ -f SAS_chr22_no_filter_0.2_1000000_LD.csv.gz ]; then
+  parallel -t -j3 curl -O ::: http://topld.genetics.unc.edu/downloads/downloads/EAS/SNV/EAS_chr[1-22]_no_filter_0.2_1000000_LD.csv.gz
+                              http://topld.genetics.unc.edu/downloads/downloads/EUR/SNV/EUR_chr[1-22]_no_filter_0.2_1000000_LD.csv.gz
+                              http://topld.genetics.unc.edu/downloads/downloads/SAS/SNV/SAS_chr[1-22]_no_filter_0.2_1000000_LD.csv.gz
 fi
 cd -
 
