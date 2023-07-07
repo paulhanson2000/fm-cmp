@@ -28,7 +28,7 @@ fi
 cd -
 
 # 1000 Genomes reference panel
-## Sample information (gender, ancestry)
+## Sample info (gender, ancestry)
 mkdir -p ./data/ref/1kg/sample_info/
 cd       ./data/ref/1kg/sample_info/
 if ! [ -f integrated_call_samples_v3.20130502.ALL.panel ]; then
@@ -36,7 +36,7 @@ if ! [ -f integrated_call_samples_v3.20130502.ALL.panel ]; then
 fi
 cd -
 
-## Genetic information
+## Genetic info
 ## TODO: Make the PLINK format myself by converting from the GDS format, instead of separate download?
 mkdir -p ./data/ref/1kg/gds_format/
 cd       ./data/ref/1kg/gds_format/
@@ -60,35 +60,6 @@ if ! [ -d sas/ ]; then
   mv g1000_sas* sas/
 fi
 cd -
-
-# TOPLD reference panel
-## Variant annotation info, incluing ancestry-specific AFs.
-mkdir -p ./data/ref/topmed/topld/anno/
-cd       ./data/ref/topmed/topld/anno/
-if ! [ -f SAS_topld_anno.csv ]; then
-  parallel -t -j3 curl -O ::: http://topld.genetics.unc.edu/downloads/downloads/EAS/SNV/EAS_chr[1-22]_no_filter_0.2_1000000_info_annotation.csv.gz \
-                              http://topld.genetics.unc.edu/downloads/downloads/EUR/SNV/EUR_chr[1-22]_no_filter_0.2_1000000_info_annotation.csv.gz \
-                              http://topld.genetics.unc.edu/downloads/downloads/SAS/SNV/SAS_chr[1-22]_no_filter_0.2_1000000_info_annotation.csv.gz
-  parallel -t -j3 gunzip -d ::: *
-  # TODO: what about that "no preprocessing" philosophy for the data folder?
-  head -1 EAS_chr1_* | tee -a EAS_topld_anno.csv EUR_topld_anno.csv SAS_topld_anno.csv # Header, then...
-  awk 'FNR-1' EAS_chr* >> EAS_topld_anno.csv # ...combine files
-  awk 'FNR-1' EUR_chr* >> EUR_topld_anno.csv
-  awk 'FNR-1' SAS_chr* >> SAS_topld_anno.csv
-
-  parallel -t -j
-fi
-
-## LD
-mkdir -p ./data/ref/topmed/topld/ld/
-cd       ./data/ref/topmed/topld/ld/
-if ! [ -f SAS_chr22_no_filter_0.2_1000000_LD.csv.gz ]; then
-  parallel -t -j3 curl -O ::: http://topld.genetics.unc.edu/downloads/downloads/EAS/SNV/EAS_chr[1-22]_no_filter_0.2_1000000_LD.csv.gz
-                              http://topld.genetics.unc.edu/downloads/downloads/EUR/SNV/EUR_chr[1-22]_no_filter_0.2_1000000_LD.csv.gz
-                              http://topld.genetics.unc.edu/downloads/downloads/SAS/SNV/SAS_chr[1-22]_no_filter_0.2_1000000_LD.csv.gz
-fi
-cd -
-
 
 # Annotations
 ## Pancreatic islet enhancers enriched in T2D (Pasquali et al. 2014)

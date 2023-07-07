@@ -34,8 +34,8 @@ TODO: printout "stamp" of configs s.t. in the rendered doc, it is clear what was
   # Make sure every dataset's ancestry is a valid ancestry in the reference panel too
   # Use fread(nrows=3) or s/t to take a peek and check that the data type of each column is reasonable. TODO: move this down into a separate input data validation step. Or trust the user some more and just use colClasses in data reading (although would hurt if failure on loading last dataset)
   # Verify valid reference genome names
-if(misc_config$ref_panel %ni% c("1kG", "TOPLD", "gnomAD")) stop(paste0("Invalid reference panel: ", misc_config$ref_panel, ". Please correct this in config.misc."))
-if(!dir.exists(misc_config$scratch_dir)) stop(paste0("Invalid scratch directory:", misc_config$scratch_dir, ". Please correct this in config.misc."))
+if(misc_config$ref_panel %ni% c("1kG", "gnomAD_1kG+HGDP")) stop(paste0("Invalid reference panel: ", misc_config$ref_panel, ". Please correct this in config.misc."))
+if(!dir.exists(misc_config$scratch_dir)) stop(paste0("Scratch directory ", misc_config$scratch_dir, " does not exist. Please create it, or change your desired scratch directory in config.misc."))
 ```
 
 ## `liftOver` loci and annotations
@@ -61,8 +61,7 @@ loci_config[, chr := ucscChrNaming(chr)]
 ```
 ```{r}
 if(misc_config$ref_panel == "1kG"   ) misc_config$ref_panel_ref_genome <- "hg19"
-if(misc_config$ref_panel == "TOPLD" ) misc_config$ref_panel_ref_genome <- "hg38"
-if(misc_config$ref_panel == "gnomAD") misc_config$ref_panel_ref_genome <- "hg38"
+if(misc_config$ref_panel == "gnomAD_1kG+HGDP") misc_config$ref_panel_ref_genome <- "hg38"
 ```
 
 ### `liftOver`
@@ -202,123 +201,6 @@ names(sumstats) <- basename(data_config$filepath)
 ```
 
 # Reference panel
-## gnomAD
-### Load
-```{r}
-# TODO: paste0 filenames too wordy, predefine them or s/t to be more concise and avoid bugs
-all_rsids <- Reduce(union, lapply(sumstats, '[', j=rsid))
-all_rsids_file <- paste0(misc_config$scratch_dir,"/all_rsids.txt")
-writeLines(all_rsids, all_rsids_file)
-
-lapply(1:nrow(loci_config), function(i) {
-  loci <- loci_configs[[misc_config$ref_panel_ref_genome]]
-
-  l_vcf <- paste0(misc_config$scratch_dir,"/",loci[i,locus],"_gnomad.vcf")
-  l_gds <- paste0(misc_config$scratch_dir,"/",loci[i,locus],"_gnomad.gds")
-
-  # TODO: only take the INFO fields I need.
-    # IMPORTANT! Easy thing that's really worth doing before scaling up to more loci.
-    # If bcftools supports this do it here. Otherwise use the seqVCF2GDS info.import field.
-  loci[i, system(paste0( "bcftools view",
-                         " -r chr",chr,":",pos_min,"-",pos_max,   # TODO: hardcoded again to use "chr#" which is what gnomAD uses; the problem is this code assumes that loci_config uses just "#" which I might change again later
-                         " --include ID==@",all_rsids_file,
-                         " gs://gcp-public-data--gnomad/release/3.1.2/vcf/genomes/gnomad.genomes.v3.1.2.sites.chr",chr,".vcf.bgz",
-                         " > ", l_vcf ))]
-
-  # TODO: use parallel=<> param for more speed
-  seqVCF2GDS(l_vcf, l_gds, storage.option="ZIP_RA", digest=F) # See ?seqRecompress: VCF2GDS conversion takes tons of memory w/ default compression. Better to use lower compression during conversion, then use seqRecompress() after. No checksum digest b/c I'm a gangsta, totally not b/c I'm impatient
-  #seqRecompress(    l_gds,               "ZIP_RA") # TODO: Could also use LZ4 b/c is fast, but what if data is huge? Let user choose.
-  unlink(l_vcf)
-})
-
-unlink(all_rsids_file)
-
-# TODO: stamp this gds filename w/ UUID or s/t.
-seqMerge(paste0(misc_config$scratch_dir,"/",loci_config$locus,"_gnomad.gds"), paste0(misc_config$scratch_dir,"/gnomad.gds"), storage.option="ZIP_RA", digest=F)
-seqRecompress(paste0(misc_config$scratch_dir,"/gnomad.gds", "LZMA")
-unlink(paste0(misc_config$scratch_dir,"/",loci_config$locus,"_gnomad.gds"))
-```
-
-### Filter sumstats using gnomAD ref panel
-```{r}
-ref <- seqOpen(paste0(misc_config$scratch_dir,"/gnomad.gds"))
-
-ancestries_AFs <- sapply(unique(data_config$ancestry), simplify=F, function(anc) {
-  if(anc=="EUR") anc <- "nfe" # TODO: not sure nfe or nfe+fin should be used as EUR
-  seqGetData(ref, paste0("annotation/info/AF_",tolower(anc)))
-}) 
-
-sumstats <- mapply(sumstats, data_config$ancestry, SIMPLIFY=F, FUN = function(s, anc) {
-    # TODO: filter by more things?
-    gnomad_filter_passed <- seqGetData(ref, "annotation/filter") == "PASS"
-    ancestry_AFs <- ancestries_AFs[[anc]]; AF_gt0_lt1 <- ancestry_AFs > 0 & ancestry_AFs < 1
-
-    total_filter <- gnomad_filter_passed & AF_gt0_lt1
-    seqSetFilter(ref, action="push+intersect", variant.sel = total_filter)
-
-    s <- s[rsid %in% seqGetData(ref,"annotation/id")]
-    #print(sapply(seqGetFilter(ref),sum))
-    seqFilterPop(ref)
-    #print(sapply(seqGetFilter(ref),sum))
-    s
-})
-```
-
-## (WIP) TOPLD
-```{r}
-# AWK won't work here b/c files are big (10mil rows+) and I'm searching for matches for 10k's of rsids inside.
-# I suspect the awk is failing b/c I have to pass all the rsids so the shell command is too long.
-# Anyways, the efficient thing to do here is unfortunately load the whole file into memory first....
-  # Not in an lapply loop though, but a for loop.
-#ref_annos <- sapply(unique(data_config$ancestry), simplify=F, function(anc) {
-#  filepath <- paste0("../data/ref/topmed/topld/anno/",anc,"_topld_anno.csv")
-#  sumstats_of_ancestry <- sumstats[which(data_config$ancestry == anc)]
-#  rsids_of_ancestry <- Reduce(union, lapply(sumstats_of_ancestry, '[', j=rsid))
-#  if(anyDuplicated(rsids_of_ancestry)>0) {stop("wat")}
-#
-#  shared_rsid_preprocess_cmd <- paste0(
-#    "awk ",
-#    "-v rsids_string='",paste(collapse=' ', rsids_of_ancestry), "' ", 
-#    "'BEGIN {",
-#      "getline; print;", # Get header line
-#      "n_rsid=split(rsids_string,rsids,\" \")", # Turn the space-delimited string of rsids into an array
-#    "}",
-#    "{", # Only keep rows of rsids shared w/ the sumstats. And only keep the Position ($1) and rsID ($2) columns.
-#      "for(i=0; i<=n_rsid; i++) {",
-#        "if($2==rsids[i]) {print $1,$2}",
-#      "}",
-#      #"if(index(rsids_string, $2) > 0) {print}",
-#    "}' ",
-#    filepath
-#  )
-#  #return(shared_rsid_preprocess_cmd)
-#
-#  fread(cmd = shared_rsid_preprocess_cmd,
-#           select=c("Position","rsID"),
-#        col.names=c("pos",     "rsid"))
-#})
-
-# This is the original way, just loading whole file and then subsetting after.
-#ref_annos <- sapply(unique(data_config$ancestry)[[1]], simplify=F, function(anc) {
-##sapply(unique(data_config$ancestry), simplify=F, function(anc) {
-#  topld_anno_file <- paste0("../data/ref/topmed/topld/anno/",anc,"_topld_anno.csv")
-#  topld_rsids <- fread(topld_anno_file, select=c("rsID"), col.names=c("rsid"))
-#
-#  sumstats_of_ancestry <- sumstats[which(data_config$ancestry == anc)]
-#  rsids_of_ancestry <- Reduce(union, lapply(sumstats_of_ancestry, '[', j=rsid))
-#})
-#
-## Filter sumstats by variants shared with reference of same ancestry
-#sumstats2 <- mapply(sumstats, data_config$ancestry, SIMPLIFY=F, FUN = function(s, s_anc) {
-#  s[rsid %in% ref_annos[[s_anc]]$rsid]
-#})
-
-# Old code, reminder how to use the topld_api exe and that it just takes a file of rsids
-#writeLines(sumstats[[1]]$rsid[1:100], "tmptopld.txt")
-# Took over 5 mins already w/ just 100 variants.
-#system(paste("../third_party/topld_api/topld_api -inFile tmptopld.txt -outputInfo outputInf.txt"))
-```
-
 ## 1kG
 ### Load
 ```{r}
@@ -335,7 +217,7 @@ seqAddValue(ref, "sample.annotation/gender", sample_info$gender, replace=T)
 rm(sample_info)
 ```
 
-### Filter sumstats using 1kG ref panel
+### Filter sumstats using ref panel (1kG)
 First, filter out useless/unusable variants from the summary stats: \
 1. If variant's ancestry-specific MAF is 0 for that sumstat file's ancestry
 2. If variant is not within the bounds of any loci specified in `locus.config`
@@ -370,6 +252,71 @@ sumstats <- mapply(sumstats, data_config$ancestry, SIMPLIFY=F,
 })
 #save(sumstats, samples_of_each_ancestry, file="filtered_sumstats.RData")
 ```
+
+## gnomAD 1kG + HGDP subset
+### Load
+```{r}
+# TODO: paste0 filenames too wordy, predefine them or s/t to be more concise and avoid bugs
+all_rsids <- Reduce(union, lapply(sumstats, '[', j=rsid))
+all_rsids_file <- paste0(misc_config$scratch_dir,"/all_rsids.txt")
+writeLines(all_rsids, all_rsids_file)
+
+lapply(1:nrow(loci_config), function(i) {
+  loci <- loci_configs[[misc_config$ref_panel_ref_genome]]
+
+  l_vcf <- paste0(misc_config$scratch_dir,"/",loci[i,locus],"_gnomad.vcf")
+  l_gds <- paste0(misc_config$scratch_dir,"/",loci[i,locus],"_gnomad.gds")
+
+  # TODO: only take the INFO fields I need.
+    # IMPORTANT! Easy thing that's really worth doing before scaling up to more loci.
+    # If bcftools supports this do it here. Otherwise use the seqVCF2GDS info.import field.
+  loci[i, system(paste0( "bcftools view",
+                         " -r chr",chr,":",pos_min,"-",pos_max,   # TODO: hardcoded again to use "chr#" which is what gnomAD uses; the problem is this code assumes that loci_config uses just "#" which I might change again later
+                         " --include ID==@",all_rsids_file,
+                         " gs://gcp-public-data--gnomad/release/3.1.2/vcf/genomes/gnomad.genomes.v3.1.2.hgdp_tgp.chr",chr,".vcf.bgz",
+                         " > ", l_vcf ))]
+
+  # TODO: use parallel=<> param for more speed
+  seqVCF2GDS(l_vcf, l_gds, storage.option="ZIP_RA", digest=F) # See ?seqRecompress: VCF2GDS conversion takes tons of memory w/ default compression. Better to use lower compression during conversion, then use seqRecompress() after. No checksum digest b/c I'm a gangsta, totally not b/c I'm impatient
+  #seqRecompress(    l_gds,               "ZIP_RA") # TODO: Could also use LZ4 b/c is fast, but what if data is huge? Let user choose.
+  unlink(l_vcf)
+})
+
+unlink(all_rsids_file)
+
+# TODO: stamp this gds filename w/ UUID or s/t.
+seqMerge(paste0(misc_config$scratch_dir,"/",loci_config$locus,"_gnomad.gds"), paste0(misc_config$scratch_dir,"/gnomad.gds"), storage.option="ZIP_RA", digest=F)
+seqRecompress(paste0(misc_config$scratch_dir,"/gnomad.gds", "LZMA")
+unlink(paste0(misc_config$scratch_dir,"/",loci_config$locus,"_gnomad.gds"))
+
+# TODO: TODO: get samples_of_each_ancestry for gnomAD_1kG_HGDP just as for 1kG, need for LD later
+```
+
+### Filter sumstats using ref panel (gnomAD 1kG + HGDP subset)
+```{r}
+ref <- seqOpen(paste0(misc_config$scratch_dir,"/gnomad.gds"))
+
+ancestries_AFs <- sapply(unique(data_config$ancestry), simplify=F, function(anc) {
+  if(anc=="EUR") anc <- "nfe" # TODO: not sure nfe or nfe+fin should be used as EUR
+  seqGetData(ref, paste0("annotation/info/AF_",tolower(anc)))
+}) 
+
+sumstats <- mapply(sumstats, data_config$ancestry, SIMPLIFY=F, FUN = function(s, anc) {
+    # TODO: filter by more things?
+    gnomad_filter_passed <- seqGetData(ref, "annotation/filter") == "PASS"
+    ancestry_AFs <- ancestries_AFs[[anc]]; AF_gt0_lt1 <- ancestry_AFs > 0 & ancestry_AFs < 1
+
+    total_filter <- gnomad_filter_passed & AF_gt0_lt1
+    seqSetFilter(ref, action="push+intersect", variant.sel = total_filter)
+
+    s <- s[rsid %in% seqGetData(ref,"annotation/id")]
+    #print(sapply(seqGetFilter(ref),sum))
+    seqFilterPop(ref)
+    #print(sapply(seqGetFilter(ref),sum))
+    s
+})
+```
+
 
 # Annotation
 ## Add Annotation Columns
@@ -533,7 +480,6 @@ names(subset_sumstatss) <- loci_config$locus
 # LD
 Calculate LD per ancestry per locus.\
 This is more space-efficient than calculating LD per dataset per locus, assuming the datasets have most of their variants in common (which they should!—or else what is the point of multi-dataset finemapping?).
-## 1kG
 ```{r}
 # TODO: consider: generating subsets of sumstats and holding them all in memory? Or just holding the rsids necessary to subset each sumstat _later on_?
   # Could actualy be more concise to have just the rsids and subset as I go.
@@ -600,60 +546,6 @@ ld_rsid_orders <-
 })})
 
 save(ld_rsid_orders, file="in/ld/ld_rsid_orders.RData") # TODO: Save as separate files, with one col of just rsids? This way, LD could be used by non-R programs more easily.
-```
-
-## gnomAD
-```{r}
-# TODO: use seqApply + C for more speed
-ld_matss <- lapply(loci_config$locus, function(l)) {
-  seqSetFilterChrom() # TODO: for speed
-  seqSetFilterAnnotID
-  ld_mats <- lapply(unique(data_config$ancestry), function(anc) {
-    rsids <- Reduce(union, lapply(subset_sumstatss[[l]], '[', j=rsid))
-    ld_mat <- sapply(rsids, function(rs1) {
-              sapply(rsids, function(rs2) {
-      p_A <- seqGetData
-      p_B <- 
-  
-})
-
-# I want a vector of all the p_As and p_Bs so that can do nice concise vectorized code.
-# How get that? seqSetFilterChrom(locus), then seqGetData(ref, "annotation/info/AF_<anc>")
-  # But make sure is filtered to the rsids in the sumstats too after that.
-    # Or better yet write that to file from the beginning using seqExport().
-    # But can't do the same for 1kG b/c I have to respect that GDS file b/c it's raw data.
-      # So might be inconsistent.
-seqSetFilterAnnotID()
-ld_matss <- lapply(1:nrow(loci_config), function(i) {
-
-  loci <- loci_configs$hg38
-  seqSetFilterChrom(ref, loci[i,chr],
-                 from.bp=loci[i,pos_min],
-                   to.bp=loci[i,pos_max])
-
-  ld_mats <- lapply(unique(data_config$ancestry), function(anc) {
-    if(anc=="EUR") anc <- "nfe" # TODO:
-    anc <- tolower(anc)
-
-    AFs <- seqGetData(ref, paste0("annotation/AF_",anc))
-    #ANs <- seqGetData(ref, paste0("annotation/AN_",anc))
-    #ACs <- seqGetData(ref, paste0("annotation/AC_",anc))
-    #nhomalts <- seqGetData(ref, paste0("annotation/nhomalt_",anc))
-
-    pABs <- AFs %o% AFs
-    D <- 
-
-    sapply(AFs, FUN=function(pA) {
-    sapply(AFs, FUN=function(pB) {
-      pAB <- pA*pB # NOTE: assuming HWE
-      D <- pAB - pA*pB # uhhh...
-      #Dmax <- ifelse(D<0, min(pA*pB, (1-pA)*(1-pB)),
-      #                    min(pA*(1-pB), pB*(1-pA)))
-      #Dprime <- D/Dmax
-      r <- D/sqrt(pA*(1-pA)*pB*(1-pB))
-    })})
-})})
-
 ```
 
 # Run Fine-Mapping Methods

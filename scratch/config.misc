@@ -1,8 +1,7 @@
 # Available LD reference panels:
   # "1kG"    (1000 Genomes)
-  # "TOPLD"  (Consists of: BioMe, JHS, MESA, WHI)
-  # "gnomAD" (v3.1.2)
-misc_config$ref_panel = "gnomAD"
+  # "gnomAD_1kG+HGDP" (gnomAD v3.1.2 1000 Genomes + Human Genome Diversity Project subset)
+misc_config$ref_panel = "gnomAD_1kG+HGDP"
 
 # Available fine-mapping methods:
   # (TODO) caviar

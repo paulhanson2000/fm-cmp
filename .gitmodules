@@ -13,6 +13,3 @@
 [submodule "third_party/SuSiEx"]
 	path = third_party/SuSiEx
 	url = https://github.com/getian107/SuSiEx.git
-[submodule "third_party/topld_api"]
-	path = third_party/topld_api
-	url = https://github.com/linnabrown/topld_api.git
