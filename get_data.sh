@@ -61,6 +61,17 @@ if ! [ -d sas/ ]; then
 fi
 cd -
 
+# gnomAD 1000 Genomes + Human Genome Diversity Project reference panel
+## Sample info (ancestry)
+mkdir -p ./data/ref/gnomad_1kg+hgdp/sample_info/
+cd       ./data/ref/gnomad_1kg+hgdp/sample_info/
+if ! [ -f gnomad.genomes.v3.1.2.hgdp_1kg_subset_sample_meta.tsv ]; then
+  curl -O https://storage.googleapis.com/gcp-public-data--gnomad/release/3.1.2/vcf/genomes/gnomad.genomes.v3.1.2.hgdp_1kg_subset_sample_meta.tsv.bgz
+  gunzip -c gnomad.genomes.v3.1.2.hgdp_1kg_subset_sample_meta.tsv.bgz > gnomad.genomes.v3.1.2.hgdp_1kg_subset_sample_meta.tsv 
+  rm gnomad.genomes.v3.1.2.hgdp_1kg_subset_sample_meta.tsv.bgz
+fi
+cd -
+
 # Annotations
 ## Pancreatic islet enhancers enriched in T2D (Pasquali et al. 2014)
 mkdir -p ./data/anno/pasquali/

@@ -229,21 +229,21 @@ seqSetFilterChrom(ref, loci_configs$hg19$chr,
                  to.bp=loci_configs$hg19$pos_max)
 
 samples_of_each_ancestry <- tapply(seqGetData(ref,"sample.id"), INDEX=seqGetData(ref,"sample.annotation/ancestry"), FUN = identity) 
-ancestry_MAFs <- lapply(samples_of_each_ancestry, function(samples_of_an_ancestry) {
+ancestries_MAFs <- lapply(samples_of_each_ancestry, function(samples_of_an_ancestry) {
     seqSetFilter(ref, sample.id = samples_of_an_ancestry)
     seqAlleleFreq(ref, minor=T)
 }) 
 seqResetFilter(ref, variant=F)
 
-invisible(sapply(data_config$ancestry, function(anc) if(anc %ni% names(ancestry_MAFs)) { print(paste("ERROR: Ancestry",anc,"mentioned in config.data is not an ancestry in the reference panel:", paste(collapse=", ", names(ancestry_MAFs)), "\nPlease remove this dataset from config.data, or if this was just a typo, change the ancestry name to match one of those in the reference panel.")); stop() })) # TODO: this belongs earlier, when loading in the data. But a nice sanity check to have for now.
+invisible(sapply(data_config$ancestry, function(anc) if(anc %ni% names(ancestries_MAFs)) { print(paste("ERROR: Ancestry",anc,"mentioned in config.data is not an ancestry in the reference panel:", paste(collapse=", ", names(ancestries_MAFs)), "\nPlease remove this dataset from config.data, or if this was just a typo, change the ancestry name to match one of those in the reference panel.")); stop() })) # TODO: this belongs earlier, when loading in the data. But a nice sanity check to have for now.
 
 # For each sumstat, keep only variants with MAF > 0 for the sumstat's ancestry.
 # Reference panel used to calculate MAF.
 # As a byproduct, also filters sumstats by variants shared with the reference.
 sumstats <- mapply(sumstats, data_config$ancestry, SIMPLIFY=F,
   FUN = function(s, anc) {
-    ancestry_MAF <- ancestry_MAFs[[anc]]
-    seqSetFilter(ref, action = "push+intersect", variant.sel = ancestry_MAF>0)
+    ancestry_MAFs <- ancestries_MAFs[[anc]]
+    seqSetFilter(ref, action = "push+intersect", variant.sel = ancestry_MAFs > 0.005) # TODO: Add MAF threshold to config.misc
     s <- s[rsid %in% seqGetData(ref,"annotation/id")]
     #print(sapply(seqGetFilter(ref),sum))
     seqFilterPop(ref)
@@ -254,9 +254,9 @@ sumstats <- mapply(sumstats, data_config$ancestry, SIMPLIFY=F,
 ```
 
 ## gnomAD 1kG + HGDP subset
-### Load
+### Get necssary data from internet
 ```{r}
-# TODO: paste0 filenames too wordy, predefine them or s/t to be more concise and avoid bugs
+# TODO: paste0(misc_config$scratch_dir...) filenames too wordy, predefine them or s/t to be more concise and avoid bugs
 all_rsids <- Reduce(union, lapply(sumstats, '[', j=rsid))
 all_rsids_file <- paste0(misc_config$scratch_dir,"/all_rsids.txt")
 writeLines(all_rsids, all_rsids_file)
@@ -282,32 +282,54 @@ lapply(1:nrow(loci_config), function(i) {
   unlink(l_vcf)
 })
 
+unlink("*.tbi") # Tabix index files clutter the working directory when you access VCF files over the internet, remove these. 
 unlink(all_rsids_file)
 
 # TODO: stamp this gds filename w/ UUID or s/t.
 seqMerge(paste0(misc_config$scratch_dir,"/",loci_config$locus,"_gnomad.gds"), paste0(misc_config$scratch_dir,"/gnomad.gds"), storage.option="ZIP_RA", digest=F)
-seqRecompress(paste0(misc_config$scratch_dir,"/gnomad.gds", "LZMA")
+seqRecompress(paste0(misc_config$scratch_dir,"/gnomad.gds"),"LZMA")
 unlink(paste0(misc_config$scratch_dir,"/",loci_config$locus,"_gnomad.gds"))
+```
 
-# TODO: TODO: get samples_of_each_ancestry for gnomAD_1kG_HGDP just as for 1kG, need for LD later
+### Load
+```{r}
+ref <- seqOpen(paste0(misc_config$scratch_dir,"/gnomad.gds"), readonly=F)
+
+# Add sample info. TODO: similarly to 1kG, move to a pre-process script?
+sample_info <- fread("../data/ref/gnomad_1kg+hgdp/sample_info/gnomad.genomes.v3.1.2.hgdp_1kg_subset_sample_meta.tsv")
+sample_info$pop <- sapply(sample_info$gnomad_population_inference, function(x) ifelse(is.na(x), NA, jsonlite::fromJSON(x)$pop))
+sample_info <- sample_info[match(seqGetData(ref,"sample.id"), s)]
+identical(sample_info$s, seqGetData(ref,"sample.id"))
+seqAddValue(ref, "sample.annotation/ancestry", sample_info$pop, replace=T)
+rm(sample_info)
 ```
 
 ### Filter sumstats using ref panel (gnomAD 1kG + HGDP subset)
 ```{r}
-ref <- seqOpen(paste0(misc_config$scratch_dir,"/gnomad.gds"))
+seqSetFilterChrom(ref, loci_configs$hg38$chr, # Already got only the necessary variants from the internet, but just for clarity
+               from.bp=loci_configs$hg38$pos_min,
+                 to.bp=loci_configs$hg38$pos_max)
 
-ancestries_AFs <- sapply(unique(data_config$ancestry), simplify=F, function(anc) {
-  if(anc=="EUR") anc <- "nfe" # TODO: not sure nfe or nfe+fin should be used as EUR
-  seqGetData(ref, paste0("annotation/info/AF_",tolower(anc)))
+seqSetFilter(ref, sample.sel = seqGetData(ref, "sample.annotation/ancestry") != "")
+samples_of_each_ancestry <- tapply(seqGetData(ref,"sample.id"), INDEX=seqGetData(ref,"sample.annotation/ancestry"), FUN = identity) 
+# NOTE: if it turns out you should just combine nfe and fin to make eur, then just union their sample ids here into a new eur col.
+ancestries_MAFs <- lapply(samples_of_each_ancestry, function(samples_of_an_ancestry) {
+    seqSetFilter(ref, sample.id = samples_of_an_ancestry)
+    seqAlleleFreq(ref, minor=T)
 }) 
+seqResetFilter(ref, variant=F)
 
 sumstats <- mapply(sumstats, data_config$ancestry, SIMPLIFY=F, FUN = function(s, anc) {
+    # TODO: Data ancestries: EAS EUR SAS. gnomad ancestry labels: eas nfe sas. More elegant way to handle this?
+    if(anc=="EUR") anc <- "nfe"
+    anc <- tolower(anc)
+
     # TODO: filter by more things?
     gnomad_filter_passed <- seqGetData(ref, "annotation/filter") == "PASS"
-    ancestry_AFs <- ancestries_AFs[[anc]]; AF_gt0_lt1 <- ancestry_AFs > 0 & ancestry_AFs < 1
+    ancestry_MAFs <- ancestries_MAFs[[anc]]; MAF_thresh_passed <- ancestry_MAFs > 0.005 # TODO: add MAF threshold to config.misc
 
-    total_filter <- gnomad_filter_passed & AF_gt0_lt1
-    seqSetFilter(ref, action="push+intersect", variant.sel = total_filter)
+    all_passed <- gnomad_filter_passed & MAF_thresh_passed
+    seqSetFilter(ref, action="push+intersect", variant.sel = all_passed)
 
     s <- s[rsid %in% seqGetData(ref,"annotation/id")]
     #print(sapply(seqGetFilter(ref),sum))
@@ -316,7 +338,6 @@ sumstats <- mapply(sumstats, data_config$ancestry, SIMPLIFY=F, FUN = function(s,
     s
 })
 ```
-
 
 # Annotation
 ## Add Annotation Columns

@@ -1,4 +1,4 @@
-install.packages(c("BiocManager", "remotes", "quarto", "data.table", "R.utils", "susieR", "Ckmeans.1d.dp"), repos="https://cloud.r-project.org") # TODO: is Ckmeans.1d.dp (recommended but optional by PolyFun) actually needed?
+install.packages(c("BiocManager", "remotes", "quarto", "data.table", "R.utils", "jsonlite", "susieR", "Ckmeans.1d.dp"), repos="https://cloud.r-project.org") # TODO: is Ckmeans.1d.dp (recommended but optional by PolyFun) actually needed?
 
 
 BiocManager::install(c("SeqArray", "SNPRelate"),
