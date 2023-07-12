@@ -108,5 +108,8 @@ if ! [ -f atac_consistent_peaks.bed ]; then
                                https://www.crg.eu/sites/default/files/crg/islet_super_enhancers.bed \
                                https://www.crg.eu/sites/default/files/crg/islet_tad-like_domains.bed \
                                https://www.crg.eu/sites/default/files/crg/atac_consistent_peaks.bed
+                               #https://www.crg.eu/sites/default/files/crg/islet_chromhmm.bed.zip
+                               #https://www.crg.eu/sites/default/files/crg/pi_merged_washu_text.txt
+                               #https://www.crg.eu/sites/default/files/crg/islet_regulome_simplified.bed.zip
 fi
 cd -

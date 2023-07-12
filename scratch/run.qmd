@@ -15,6 +15,9 @@ library(data.table)
 library(SeqArray) # TODO: don't need this unless using certain ref panels, so load later.
 library(SNPRelate)
 ```
+```{r}
+"%ni%" <- Negate("%in%")
+```
 
 # Configs
 ```{r}
@@ -28,7 +31,6 @@ TODO: printout "stamp" of configs s.t. in the rendered doc, it is clear what was
 
 ## Validate input
 ```{r}
-"%ni%" <- Negate("%in%")
 # TODO: Why? Because the rest of the code is cleaner under the assumption all input datasets are valid, and error messages early save the user time.
   # For each row in data_config, check which columns are specified for each dataset to make sure everything that's required by all misc_config$fm_methods is there.
   # Make sure every dataset's ancestry is a valid ancestry in the reference panel too
@@ -435,8 +437,8 @@ getBestFgwasModelP1_tail_recursive <- tailr::loop_transform(getBestFgwasModelP1_
 
 # P2 tests which penalty has the best x-validation likelihood, given the model from P1.
 getBestFgwasModelP2 <- function(sumstat_filename_fgwas_compatible, annos) {
-  # TODO: IDK the stats theory well enough: will the x-validation likelihoods here have only one minimum? If so, could optimize by doing a binary search for the best penalty or s/t.
-  # TODO: either way, would be good to focus down on a minimum a little more after the best one in steps of 0.05 is found.
+  # TODO: IDK the stats theory well enough: will the x-validation likelihoods here have only one minimum? If so, could optimize by doing a search w/ intelligently-chosen steps for the best penalty or s/t.
+  # TODO: either way, could be good to focus down on a minimum a little more after the best one in steps of 0.05 is found.
   xv_llks <- lapply(seq(0,1,0.05), function(penalty) {
     system(paste0( "../third_party/fgwas/src/fgwas -i ", sumstat_filename_fgwas_compatible,
                    " -w ", paste(collapse='+', annos),
@@ -450,7 +452,7 @@ getBestFgwasModelP2 <- function(sumstat_filename_fgwas_compatible, annos) {
 
 # P3 drops annos from the model using P2's penalty, until the x-validation likelihood is maximized.
 getBestFgwasModelP3 <- function(sumstat_filename_fgwas_compatible, annos, xv_penalty, og_xv_llk) {
-  # TODO: IDK the stats theory well enough: should I try every permutation of model? Or if dropping an anno increase the x-validation likelihood of the model, it will still do so in the context of any other annotations?
+  # TODO: IDK the stats theory well enough: it says "keep dropping as long as likelihood keeps increasing", but should I drop the ones that give the most increase first?
     # Here I assume that it is safe to just traverse the annotations once, since that's what the fgwas manual seems to do.
   xv_llks <- sapply(annos, function(anno_to_drop) {
     model_with_one_anno_dropped <- paste(collapse='+', annos[!anno_to_drop])
