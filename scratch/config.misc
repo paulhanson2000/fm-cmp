@@ -3,6 +3,11 @@
   # "gnomAD_1kG+HGDP" (gnomAD v3.1.2 1000 Genomes + Human Genome Diversity Project subset)
 misc_config$ref_panel = "gnomAD_1kG+HGDP"
 
+# If you chose the "gnomAD_1kG_HGDP" reference panel, there are separate Finnish and non-Finnish European ancestries.
+# Should Finnish be included in the EUR ancestry?
+misc_config$gnomad_count_fin_as_eur = F
+
+
 # Available fine-mapping methods:
   # (TODO) caviar
   # (TODO) caviarbf
@@ -13,7 +18,7 @@ misc_config$ref_panel = "gnomAD_1kG+HGDP"
   # (TODO) mscaviar
   # paintor
   # susiex
-misc_config$fm_methods = list(
+misc_config$fm_methods = c(
   "caviar", "caviarbf", "finemap", "guessfm", "ma-focus", "mjam", "mscaviar", "paintor", "susiex"
 )
 
@@ -21,6 +26,10 @@ misc_config$fm_methods = list(
 # Use this functionality, or calculate priors for PAINTOR with fgwas like the rest?
 # True or False:
 misc_config$use_paintor_anno_functionality = F
+
+
+misc_config$maf_threshold = 0.005
+
 
 # Change this if you're not on Compute Canada!
 # Examples: Sys.getenv("SCRATCH"), "/scratch", "/tmp"
