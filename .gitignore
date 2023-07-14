@@ -16,8 +16,8 @@ third_party/finemap/
 third_party/liftover/
 third_party/mr_mega/
 
-scratch/in/
-scratch/out/
-scratch/old/results/
+in/
+out/
+old/results/
 
-scratch/py*
+py*/
