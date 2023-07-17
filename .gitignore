@@ -4,6 +4,7 @@ data
 *.gz
 *.RData
 
+/.quarto/
 *.html
 *.rmarkdown
 *_files/

@@ -7,10 +7,10 @@ if [ -d /lustre03/project/6074892/datasets/ ]; then
 fi
 
 # Mahajan 2022 summary stats and fine-mapping results
-mkdir -p ./data/DIAMANTE2022/sumstat/
-cd       ./data/DIAMANTE2022/sumstat/
+mkdir -p data/DIAMANTE2022/sumstat/
+cd       data/DIAMANTE2022/sumstat/
 if ! [ -f DIAMANTE-EAS.sumstat.txt ]; then 
-  wget https://personal.broadinstitute.org/ryank/DIAMANTE.sumstats.zip # Alternative: http://diagram-consortium.org
+  curl -O https://personal.broadinstitute.org/ryank/DIAMANTE.sumstats.zip # Alternative: http://diagram-consortium.org
   unzip DIAMANTE.sumstats.zip
   parallel -t -j3 gzip -d ::: DIAMANTE-EAS.sumstat.txt.gz \
                               DIAMANTE-EUR.sumstat.txt.gz \
@@ -18,53 +18,29 @@ if ! [ -f DIAMANTE-EAS.sumstat.txt ]; then
 fi
 cd -
 
-cd ./data/DIAMANTE2022/
+cd data/DIAMANTE2022/
 if ! [ -d fine_mapping/ ]; then
-  wget https://personal.broadinstitute.org/ryank/DIAMANTE.fine_mapping.zip
+  curl -O https://personal.broadinstitute.org/ryank/DIAMANTE.fine_mapping.zip
   unzip DIAMANTE.fine_mapping.zip
   rm    DIAMENTE.fine_mapping.zip
   mv fine_mapping_upload/ fine_mapping/
 fi
 cd -
 
-# 1000 Genomes reference panel
-## Sample info (gender, ancestry)
-mkdir -p ./data/ref/1kg/sample_info/
-cd       ./data/ref/1kg/sample_info/
+# Reference Panels
+# Only the reference panels' sample info is downloaded.
+# Most data is downloaded later, in the R script, so that we only download what variants' data we actually need.
+## 1000 Genomes reference panel sample info
+mkdir -p data/ref/1kg/sample_info/
+cd       data/ref/1kg/sample_info/
 if ! [ -f integrated_call_samples_v3.20130502.ALL.panel ]; then
-  wget http://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/integrated_call_samples_v3.20130502.ALL.panel
+  curl -O http://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/integrated_call_samples_v3.20130502.ALL.panel
 fi
 cd -
 
-## Genetic info
-## TODO: Make the PLINK format myself by converting from the GDS format, instead of separate download?
-mkdir -p ./data/ref/1kg/gds_format/
-cd       ./data/ref/1kg/gds_format/
-if ! [ -f 1KG_ALL.autosomes.phase3_shapeit2_mvncall_integrated_v5a.20130502.genotypes.gds ]; then
-  wget https://gds-stat.s3.amazonaws.com/download/1000g/2013/1KG_ALL.autosomes.phase3_shapeit2_mvncall_integrated_v5a.20130502.genotypes.gds
-fi
-cd -
-
-mkdir -p ./data/ref/1kg/plink_format/
-cd       ./data/ref/1kg/plink_format/
-if ! [ -d sas/ ]; then
-  parallel -t -j3 wget  ::: https://ctg.cncr.nl/software/MAGMA/ref_data/g1000_eas.zip \
-                            https://ctg.cncr.nl/software/MAGMA/ref_data/g1000_eur.zip \
-                            https://ctg.cncr.nl/software/MAGMA/ref_data/g1000_sas.zip
-  parallel -t -j3 unzip ::: g1000_eas.zip \
-                            g1000_eur.zip \
-                            g1000_sas.zip
-  mkdir eas eur sas
-  mv g1000_eas* eas/
-  mv g1000_eur* eur/
-  mv g1000_sas* sas/
-fi
-cd -
-
-# gnomAD 1000 Genomes + Human Genome Diversity Project reference panel
-## Sample info (ancestry)
-mkdir -p ./data/ref/gnomad_1kg+hgdp/sample_info/
-cd       ./data/ref/gnomad_1kg+hgdp/sample_info/
+## gnomAD 1000 Genomes + Human Genome Diversity Project reference panel sample info
+mkdir -p data/ref/gnomad_1kg+hgdp/sample_info/
+cd       data/ref/gnomad_1kg+hgdp/sample_info/
 if ! [ -f gnomad.genomes.v3.1.2.hgdp_1kg_subset_sample_meta.tsv ]; then
   curl -O https://storage.googleapis.com/gcp-public-data--gnomad/release/3.1.2/vcf/genomes/gnomad.genomes.v3.1.2.hgdp_1kg_subset_sample_meta.tsv.bgz
   gunzip -c gnomad.genomes.v3.1.2.hgdp_1kg_subset_sample_meta.tsv.bgz > gnomad.genomes.v3.1.2.hgdp_1kg_subset_sample_meta.tsv 
@@ -74,8 +50,8 @@ cd -
 
 # Annotations
 ## Pancreatic islet enhancers enriched in T2D (Pasquali et al. 2014)
-mkdir -p ./data/anno/pasquali/
-cd       ./data/anno/pasquali/
+mkdir -p data/anno/pasquali/
+cd       data/anno/pasquali/
 if ! [ -f PDX1_HI_32_1e-10_peaks.bed ]; then
 #wget -r -np -A bed ftp.ebi.ac.uk/biostudies/nfs/E-MTAB-/919/E-MTAB-1919/Files/FOXA2_HI_32_1e-10_peaks.bed 
   parallel -t -j13 curl -O ::: ftp.ebi.ac.uk/biostudies/nfs/E-MTAB-/919/E-MTAB-1919/Files/FOXA2_HI_101_1e-10_peaks.bed \
@@ -94,8 +70,8 @@ fi
 cd -
 
 ## Pancreatic islet chromatin architecture stuff (Miguel-Escalada et al. 2019)
-mkdir -p ./data/anno/miguel-escalada/
-cd       ./data/anno/miguel-escalada/
+mkdir -p data/anno/miguel-escalada/
+cd       data/anno/miguel-escalada/
 if ! [ -f atac_consistent_peaks.bed ]; then
   # TODO: there were a couple other non-bed format files I skipped b/c I don't know how to use them
   parallel -t -j11 curl -O ::: https://www.crg.eu/sites/default/files/crg/smca1_consistent_peaks_q001.bed \

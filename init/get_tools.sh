@@ -1,16 +1,17 @@
 #!/bin/bash
 
-set -e # exit if anything fails
-git submodule update --remote # For tools hosted on GitHub, download their source
+git submodule update --init --remote # For tools hosted on GitHub, download their source
 
 # Detect if on Compute Canada. If so, will use pre-installed Python things 
 PIPFLAGS=""
-uname -n | grep calculquebec > /dev/null
+uname -n | grep calculquebec
 if [ $? -eq 0 ]; then PIPFLAGS="--no-index"; fi
 
+# Exit if anything fails
+set -e 
 
 # fgwas
-cd ./third_party/fgwas
+cd third_party/fgwas/
 if ! [ -f src/fgwas ]; then
   ./configure
   make
@@ -18,7 +19,7 @@ fi
 cd -
 
 # FINEMAP
-cd ./third_party/
+cd third_party/
 if ! [ -f finemap/finemap_v1.4.2_x86_64 ]; then
   curl -O http://www.christianbenner.com/finemap_v1.4.2_x86_64.tgz
   tar -zxf finemap_v1.4.2_x86_64.tgz
@@ -27,22 +28,9 @@ if ! [ -f finemap/finemap_v1.4.2_x86_64 ]; then
 fi
 cd -
 
-# gsutil
-#mkdir -p ./third_party/gsutil/
-#cd       ./third_party/gsutil/
-#if ! [ -d py_env_gsutil ]; then virtualenv --no-download py_env_gsutil; fi
-#source py_env_gsutil/bin/activate
-#set +e; gsutil; already_have_gsutil=$?; set -e
-#if [ $already_have_gsutil -ne 0 ]; then
-#  python -m pip install $PIPFLAGS --upgrade pip
-#  python -m pip install $PIPFLAGS gsutil
-#fi
-#deactivate
-#cd - 
-
 # liftOver
-mkdir -p ./third_party/liftover/
-cd       ./third_party/liftover/
+mkdir -p third_party/liftover/
+cd       third_party/liftover/
 if ! [ -f liftOver ]; then
   curl -O http://hgdownload.soe.ucsc.edu/admin/exe/linux.x86_64/liftOver
   chmod +x liftOver
@@ -53,8 +41,8 @@ fi
 cd -
 
 # MR-MEGA
-mkdir -p ./third_party/mr_mega/
-cd       ./third_party/mr_mega/
+mkdir -p third_party/mr_mega/
+cd       third_party/mr_mega/
 if ! [ -f MR-MEGA ]; then
   curl -O https://tools.gi.ut.ee/tools/MR-MEGA_v0.2.zip
   unzip MR-MEGA_v0.2.zip
@@ -67,7 +55,7 @@ cd -
 # If you get errors while compiling, you might be missing these dependencies:
   # FlexiBLAS: https://gitlab.mpi-magdeburg.mpg.de/software/flexiblas-release
   # GSL: https://www.gnu.org/software/gsl/
-cd ./third_party/MsCAVIAR/
+cd third_party/MsCAVIAR/
 if ! [ -f MsCAVIAR ]; then
   set +e
   make
@@ -81,7 +69,7 @@ fi
 cd -
 
 # PAINTOR
-cd ./third_party/PAINTOR_V3.0/
+cd third_party/PAINTOR_V3.0/
 if ! [ -f PAINTOR ]; then
   2to3 -wn PAINTOR_Utilities/AnnotateLocus.py
   chmod +x install.sh
@@ -91,32 +79,33 @@ cd -
 
 # TODO: major improvements to make for this install:
   # Use --no-index (in PIPFLAGS variable)
-  # Instead of manually listing all the packages, use a requrements.txt? Or maybe that extra file would be inelegant to put somewhere, so at least use the requrements.txt to get hard verison numbers.
   # Maybe create new pyvenvs per-job, as apparently this can be faster? (See CCDB Python docs)
 # PolyFun
-cd ./third_party/polyfun/
+cd third_party/polyfun/
 if ! [ -d polyfun_py_env ]; then virtualenv polyfun_py_env; fi
 source polyfun_py_env/bin/activate
+set +e
 python -c "import rpy2" # TODO: not a foolproof check but w/e
 already_installed=$?
+set -e
 if [  $already_installed -ne 0 ]; then
   python -m pip install --upgrade pip
-  python -m pip install numpy
-  python -m pip install scipy
-  python -m pip install sklearn
-  python -m pip install pandas
-  python -m pip install tqdm
+  python -m pip install numpy==1.25.1
+  python -m pip install scipy==1.11.1
+  python -m pip install scikit-learn==1.3.0
+  python -m pip install pandas==2.0.3
+  python -m pip install tqdm==4.65.0
   python -m pip install pyarrow==11.0.0
-  python -m pip install bitarray
-  python -m pip install networkx
-  python -m pip install pandas-plink
-  python -m pip install rpy2
+  python -m pip install bitarray==2.7.6
+  python -m pip install networkx==3.1
+  python -m pip install pandas-plink==2.2.9
+  python -m pip install rpy2==3.5.13
 fi
 deactivate
 cd -
 
 # SuSiEx
-cd ./third_party/SuSiEx/
+cd third_party/SuSiEx/
 if ! [ -f bin/SuSiEx ]; then
   cd src
   make all
