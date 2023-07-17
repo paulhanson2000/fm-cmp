@@ -8,21 +8,25 @@ module purge
 
 module try-load git # BU SCC
 module try-load parallel # BU SCC
+module try-load automake/1.14.1 # BU SCC
 
-module load r/4.2 # Compute Canada
-module try-load python/3.11.2  # Compute Canada version
-module try-load python3/3.10.5 # BU SCC version
+module try-load r/4.2 # Compute Canada
+module try-load R/4.2 # BU SCC
+module try-load python/3.11.2  # Compute Canada
+module try-load python3/3.10.5 # BU SCC
 
 module try-load parallel # BU SCC
-module load plink/1.9b_6.21-x86_64 # For SuSiEx. module load plink/2.00a3.6` (plink 2.0) doesn't seem to work. TODO eventually calc ld myself and remove this
-module load bcftools
+module try-load plink/1.9b_6.21-x86_64 # For SuSiEx on Compute Canada # TODO: calc SuSiEx's LD myself and remove PLINK dependency
+module try-load plink/1.90b6.21 # For SuSiEx on BU SCC
+module load htslib/1.16
+module load bcftools/1.16
 
 module load boost         # For fGWAS
 module load gsl           # For fGWAS and MsCAVIAR
 module try-load flexiblas # For MsCAVIAR on Compute Canada
-#module try-load liblas   # For MsCaviar on BU SCC # TODO, automatically loaded by LAPACK maybe so no need?
 module try-load lapack    # For MsCaviar on BU SCC
-#module load cuda          # For PulyFun dependency arrow -> pyarrow # TODO: "module spider arrow" shows that this seems optional. Is having this module activated important in compiling important GPU-accel stuff for pyarrow?
+module try-load rpy2      # For PolyFun on BU SCC
+#module load cuda          # For PolyFun dependency arrow -> pyarrow # TODO: "module spider arrow" shows that this seems optional. Is having this module activated important in compiling important GPU-accel stuff for pyarrow?
 module load gcc           # For PolyFun dependency arrow -> pyarrow
 module try-load arrow     # For PolyFun dependency pyarrow on Compute Canada
 module try-load thrift    # For PolyFun dependency pyarrow on Compute Canada

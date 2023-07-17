@@ -9,7 +9,7 @@ fi
 # Mahajan 2022 summary stats and fine-mapping results
 mkdir -p data/DIAMANTE2022/sumstat/
 cd       data/DIAMANTE2022/sumstat/
-if ! [ -f DIAMANTE-EAS.sumstat.txt ]; then 
+if ! [ -f DIAMANTE-SAS.sumstat.txt ]; then 
   curl -O https://personal.broadinstitute.org/ryank/DIAMANTE.sumstats.zip # Alternative: http://diagram-consortium.org
   unzip DIAMANTE.sumstats.zip
   parallel -t -j3 gzip -d ::: DIAMANTE-EAS.sumstat.txt.gz \

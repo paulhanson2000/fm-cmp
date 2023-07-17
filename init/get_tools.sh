@@ -99,7 +99,12 @@ if [  $already_installed -ne 0 ]; then
   python -m pip install bitarray==2.7.6
   python -m pip install networkx==3.1
   python -m pip install pandas-plink==2.2.9
-  python -m pip install rpy2==3.5.13
+  python -m pip install rpy2==3.5.7
+
+  # TODO: still not working on BU SCC due to rpy2 issues
+  set +e
+  fix_rpy2.sh # Fix rpy2 bug on BU SCC :V
+  set -e
 fi
 deactivate
 cd -
