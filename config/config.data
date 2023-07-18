@@ -1,4 +1,4 @@
-filepath                                                   n  ancestry  ref_genome  chr_col  pos_col  rsid_col  effect_allele_col  other_allele_col  eaf_col  b_col  se_col  z_col  p_col  n_col
-../data/DIAMANTE2022/sumstat/DIAMANTE-EAS.sumstat.txt  56268  EAS       b37               1        2         4                  5                 6        7      8       9     NA     10     NA
-../data/DIAMANTE2022/sumstat/DIAMANTE-EUR.sumstat.txt  80154  EUR       b37               1        2         4                  5                 6        7      8       9     NA     10     NA
-../data/DIAMANTE2022/sumstat/DIAMANTE-SAS.sumstat.txt  16540  SAS       b37               1        2         4                  5                 6        7      8       9     NA     10     NA
+filepath                                                n  ancestry  ref_genome  chr_col  pos_col  rsid_col  effect_allele_col  other_allele_col  eaf_col  b_col  se_col  z_col  p_col  n_col
+data/DIAMANTE2022/sumstat/DIAMANTE-EAS.sumstat.txt  56268  EAS       b37               1        2         4                  5                 6        7      8       9     NA     10     NA
+data/DIAMANTE2022/sumstat/DIAMANTE-EUR.sumstat.txt  80154  EUR       b37               1        2         4                  5                 6        7      8       9     NA     10     NA
+data/DIAMANTE2022/sumstat/DIAMANTE-SAS.sumstat.txt  16540  SAS       b37               1        2         4                  5                 6        7      8       9     NA     10     NA

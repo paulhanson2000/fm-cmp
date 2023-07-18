@@ -22,10 +22,10 @@ library(SNPRelate)
 # Configs
 ```{r}
 misc_config <- list()
-              source("config.misc")
-data_config <- fread("config.data")
-loci_config <- fread("config.loci")
-anno_config <- fread("config.anno")
+              source("config/config.misc")
+data_config <- fread("config/config.data")
+loci_config <- fread("config/config.loci.all")
+anno_config <- fread("config/config.anno")
 ```
 TODO: printout "stamp" of configs s.t. in the rendered doc, it is clear what was run.
 
@@ -49,6 +49,10 @@ if(misc_config$ref_panel %ni% c("1kG", "gnomAD_1kG+HGDP")) stop(paste0("Invalid 
 # if(any(misc_config$gnomad_eur_ancestries %ni% c("nfe", "fin", "asj")) || length(misc_config$gnomad_eur_ancestries)==0) stop(paste0("")) # TODO:
 if(!dir.exists(misc_config$scratch_dir)) stop(paste0("Scratch directory ", misc_config$scratch_dir, " does not exist. Please create it, or change your desired scratch directory in config.misc."))
 ```
+```{r}
+if(misc_config$ref_panel == "1kG"   ) misc_config$ref_panel_ref_genome <- "hg19"
+if(misc_config$ref_panel == "gnomAD_1kG+HGDP") misc_config$ref_panel_ref_genome <- "hg38"
+```
 
 ## `liftOver` loci and annotations
 More efficient and accurate to `liftOver` `config.loci`/`.anno` to the sumstats' reference genomes rather than vice-versa. The summary stats are likely big files, especially before we have had the chance to subset them to only the necessary variants.\
@@ -57,7 +61,7 @@ That said, even rsIDs can be ambiguous ([source](https://gnomad.broadinstitute.o
 TODO add blurb about how b37 hg19 CRCh37 are mostly equiv except mitochondria and "chr#" vs "#" and link sources, and how GRCh38 and hg38 are equiv AFAIK
 
 ### Convert to UCSC naming scheme
-`liftOver` uses the UCSC naming scheme, so we need to too.
+`liftOver` uses the UCSC naming scheme, we need to too.
 ```{r}
 #| output: false
 ucscRefGenomeNaming <- function(config_file) {
@@ -66,72 +70,42 @@ ucscRefGenomeNaming <- function(config_file) {
   config_file[, ref_genome := factor(ref_genome)]
 } 
 lapply(list(data_config, loci_config, anno_config), ucscRefGenomeNaming)
-
-ucscChrNaming <- function(chr) { ifelse(is.integer(chr), paste0("chr",chr), chr) }
-ucscChrNaming <- Vectorize(ucscChrNaming)
-loci_config[, chr := ucscChrNaming(chr)]
-```
-```{r}
-if(misc_config$ref_panel == "1kG"   ) misc_config$ref_panel_ref_genome <- "hg19"
-if(misc_config$ref_panel == "gnomAD_1kG+HGDP") misc_config$ref_panel_ref_genome <- "hg38"
 ```
 
 ### `liftOver`
 ```{r}
-liftOver <- function(liftover_bin, chrs, pos_mins, pos_maxs, from_ref_genome, to_ref_genome, bed_file=NULL, out_file=NULL) {
-  chain_file_path <- dirname(liftover_bin)
-  chain_file_name <- paste0(from_ref_genome, "To", tools::toTitleCase(as.character(to_ref_genome)), ".over.chain.gz")
-  chain_file <- paste0(chain_file_path,"/",chain_file_name)
+if(!dir.exists("out/liftover")) dir.create("out/liftover", recursive=T)
+source("inc/liftOver.R")
 
-  if(from_ref_genome == to_ref_genome) stop("Using liftOver to convert from one reference genome to the same reference genome!")
-  if(!file.exists(paste0(chain_file))) stop(paste0("Please download the chain file https://hgdownload.soe.ucsc.edu/goldenPath/",from_ref_genome,"/liftOver/",chain_file_name," and add it to ",chain_file_path,"/."))
-  # TODO: downloading automatically for the user would be nice, but Compute Canada nodes don't have internet. Maybe move this chain-file-getting to a bash script that happens during init? But then the init scripts would be coupled to the config files changing.
-
-  if(is.null(bed_file)) {
-    bed_file <- "to_lift.bed"
-    fwrite(data.table(chrs,pos_mins,pos_maxs), bed_file, sep=' ', col.names=F)
-  }
-  if(is.null(out_file)) {
-    out_file <- "lifted.bed"
-  }
-
-  system(paste(liftover_bin, bed_file, chain_file, out_file, "unmapped.tmp"))
-
-  n_bed_rows <- as.integer(system(paste("wc -l", bed_file, "| awk '{print $1}'"), intern=T))
-  n_unmapped <- as.integer(system(paste("wc -l unmapped.tmp | awk '{print $1}'"), intern=T))
-  if(n_unmapped > 0) message(paste(n_unmapped,"/",n_bed_rows, "regions could not be liftOver'd."))
-
-  out <- fread(out_file)
-  unlink(c("to_lift.bed", "lifted.bed", "unmapped.tmp"))
-  out
-}
-if(!dir.exists("out/liftover")) dir.create("out/liftover")
-
-# Make separate versions of config.loci, lifted over to the necessary reference genome(s).
 loci_configs <-
 lapply(union(data_config$ref_genome, misc_config$ref_panel_ref_genome), function(dg) {
-  lifted_loci_config <- copy(loci_config)
+
+  loci_config_bed_format <- data.table(
+    chrom      = {if(!grepl("chr",loci_config$chr[1])) paste0("chr",loci_config$chr)
+                  else                                              loci_config$chr },
+    chromStart = loci_config$pos_min,
+    chromEnd   = loci_config$pos_max,
+    name       = loci_config$locus
+  )
+
+  loci_config_lifted <- do.call(rbind,
   lapply(unique(loci_config$ref_genome), function(lg) {
-    if(dg != lg) {
-      loci_of_a_ref_genome <- loci_config[ref_genome == lg]
+    loci_of_a_ref_genome_bed <- loci_config_bed_format[loci_config$ref_genome == lg] 
 
-      lifted <- liftOver("../third_party/liftover/liftOver",
-                         loci_of_a_ref_genome$chr,
-                         loci_of_a_ref_genome$pos_min,
-                         loci_of_a_ref_genome$pos_max,
-                         from_ref_genome = lg,
-                           to_ref_genome = dg)
-
-      i <- which(lifted_loci_config$ref_genome == lg)
-      set(lifted_loci_config, i, "chr",     lifted[,1])
-      set(lifted_loci_config, i, "pos_min", lifted[,2])
-      set(lifted_loci_config, i, "pos_max", lifted[,3])
-      set(lifted_loci_config, i, "ref_genome", dg)
-    }
+    if(dg != lg)
+      liftOver("third_party/liftover/liftOver",
+               loci_of_a_ref_genome_bed,
+               from_build = lg, to_build = dg)
+    else
+      loci_of_a_ref_genome_bed
   })
-  lifted_loci_config[, chr := sub("chr","",chr)] # Undo UCSC chr naming # TODO: make factor, and make a convenience chrFactor() function to use here and when reading sumstats?
-  fwrite(lifted_loci_config, paste0("out/liftover/config.loci.",dg), sep=' ')
-  lifted_loci_config
+  )
+
+  setnames(setDT(loci_config_lifted), c("chr","pos_min","pos_max","locus"))
+  loci_config_lifted[, chr := sub("chr","",chr)] # Undo UCSC chr naming # TODO: make factor, and make a convenience chrFactor() function to use here and when reading sumstats?
+
+  fwrite(loci_config_lifted, paste0("out/liftover/config.loci.",dg), sep=' ')
+  loci_config_lifted
 })
 names(loci_configs) <- union(data_config$ref_genome, misc_config$ref_panel_ref_genome)
 
@@ -141,15 +115,14 @@ lapply(unique(data_config$ref_genome), function(dg) {
   sapply(1:nrow(anno_config), function(i) {
     ag <- anno_config[i,ref_genome]
     if(dg != ag) {
-      lifted_bed_file_name <- paste0("out/liftover/",anno_config[i,name],"-lifted_to_",dg,".bed")
-      liftOver("../third_party/liftover/liftOver",
-               bed_file = anno_config[i,bed_file],
-               out_file = lifted_bed_file_name, 
-               from_ref_genome = ag,
-                 to_ref_genome = dg)
+      lifted_bed_file <- paste0("out/liftover/",anno_config[i,name],"-lifted_to_",dg,".bed")
+      liftOver("third_party/liftover/liftOver",
+               anno_config[i,bed_file],
+               out_file = lifted_bed_file, 
+               from_build = ag, to_build = dg)
 
       lifted_anno_config[i, `:=`(ref_genome = dg,
-                                 bed_file = lifted_bed_file_name)]
+                                 bed_file = lifted_bed_file)]
     }
   })
   fwrite(lifted_anno_config, paste0("out/liftover/config.anno.",dg), sep=' ')
@@ -162,9 +135,7 @@ names(anno_configs) <- unique(data_config$ref_genome)
 ```{r}
 #| output: false
 sumstats <- lapply(1:nrow(data_config), function(r) {
-
   loci <- loci_configs[[ data_config[r,ref_genome] ]] # Loci with coords lifted to the current data file's ref genome
-  loci <- loci[, chr := as.integer(sub("chr","",chr))] # TODO: hardcoded assuming data has "#" not "chr#" format, but make it so that either works (hint: I'd like to use factors with chr# labels). Sorry future self I have o/ things to do rn. Also this modifies by reference, careful, remember to use copy().
 
   # AWK command given to fread(). Filters variants not in any config.loci locus, or with EAF of 0 or 1.
   # If your data is huge but you only care to look at a few regions, this saves memory.
