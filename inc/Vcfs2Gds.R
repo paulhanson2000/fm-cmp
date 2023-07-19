@@ -12,7 +12,7 @@ Vcfs2Gds <- function(files, output_name, sample_ids=NULL, variant_ids=NULL, regi
   #' @section A tip to increase speed: Even if you already provide variant_ids, also providing regions will speed things up a lot. It is easier for computers to compare chromosome and position numbers than ID strings.
   #' @section TODO: Support and chr:pos(:ref:alt) IDs? Support mixed types of IDs? Infer regions if all IDs are chr:pos(:ref:alt), and maybe mention in these docs that that optimization is made once implemented. Deal with "chr#" vs. "#" syntax for the user of not matching (I think bcftools norm or  bcftools annotate --rename-chrs can help). Allow GRanges regions input?
 
-  if(system(bcftools_bin) == 127) stop("Could not run ",bcftools_bin,". Please ensure bcftools is installed, or change the bcftools_bin argument for a typo.")
+  if(system(bcftools_bin)==127) stop("Could not run ",bcftools_bin,". Please ensure bcftools is installed, or change the bcftools_bin argument for a typo.")
   if(!length(variant_ids)==1 || !file.exists(variant_ids)) { if(!all(grepl("^rs",variant_ids))) stop("<TODO> Only rs IDs are supported. In the meantime you could leave it blank (meaning all variants will be gotten), and then filter the resulting GDS file how you like.") }
 
   # If needed, convert the function inputs to files (makes the bcftools call simpler later)
@@ -23,34 +23,27 @@ Vcfs2Gds <- function(files, output_name, sample_ids=NULL, variant_ids=NULL, regi
   if(!is_file(    regions) && !is.null(    regions)) {
     if(!is.data.frame(regions)) { # If user did not already input a bed-like data.frame
       a <- strsplit(regions, ":|-")
-      bed <- data.frame(
+      regions <- data.frame(
         chrom      = lapply(a, '[', 1),
         chromStart = lapply(a, '[', 2),
         chromEnd   = lapply(a, '[', 3))
-      write.table(bed, "/tmp/regions.bed")
     }
+    write.table(regions, "/tmp/regions.bed", row.names=F, col.names=F, quote=F)
   }
 
-  bcftools_cmd <- paste(
-    bcftools_bin, "concat",
-    "-f /tmp/vcf_or_bcf_files.txt",
-    "-Ou" # No compression
-  )
+  # Creating command:
+  # bcftools concat -Ou -f <files> -R <regions> | bcftools view -Ou -i <variant_ids> -S <sample_ids>
+  bcftools_cmd <- paste(bcftools_bin, "concat -Ou -f /tmp/vcf_or_bcf_files.txt")
   if(!is.null(regions)) bcftools_cmd <- paste(bcftools_cmd, "-R /tmp/regions.bed")
-  bcftools_cmd <- paste(bcftools_cmd,
-    "|",
-    bcftools_bin,"view"
-  )
-  if(!is.null(variant_ids)) bcftools_cmd <- paste(bcftools_cmd, "-i ID=@/tmp/variant_ids.txt")
-  if(!is.null( sample_ids)) bcftools_cmd <- paste(bcftools_cmd, "-S /tmp/sample_ids.txt"     )
-  #bcftools_cmd <- paste(bcftools_cmd,
-  #  "|",
-  #  bcftools_bin,"annotate",
-  #  "--rename-chrs <TODO:>
+  bcftools_cmd <- paste(bcftools_cmd,"|",bcftools_bin,"view -Ou")
+  if(!is.null( variant_ids)) bcftools_cmd <- paste(bcftools_cmd, "-i ID=@/tmp/variant_ids.txt")
+  if(!is.null(  sample_ids)) bcftools_cmd <- paste(bcftools_cmd, "-S /tmp/sample_ids.txt"     )
+  if(!is.null(chr_name_map)) bcftools_cmd <- paste(bcftools_cmd, "|",bcftools_bin,"annotate --rename-chrs",chr_name_map)
+  return(bcftools_cmd)
   
   vcf_connection <- pipe(bcftools_cmd)
   f <- seqVCF2GDS(vcf_connection, output_name)
-  unlink("/tmp/vcf_or_bcf_files.txt", "/tmp/sample_ids.txt", "/tmp/variant_ids.txt", "/tmp/regions.bed")
   close(vcf_connection)
+  unlink("/tmp/vcf_or_bcf_files.txt", "/tmp/sample_ids.txt", "/tmp/variant_ids.txt", "/tmp/regions.bed")
   f
 }
