@@ -6,6 +6,7 @@ misc_config$maf_threshold = 0.005
 # Available LD reference panels:
   # "1kG"    (1000 Genomes)
   # "gnomAD_1kG+HGDP" (gnomAD v3.1.2 1000 Genomes + Human Genome Diversity Project subset)
+  # TODO: Alternatively, your own reference VCF, BCF, or GDS file(s). If multiple files, write as an R character vector, like so: c("file1.vcf", "file2.gds").
 misc_config$ref_panel = "gnomAD_1kG+HGDP"
 
 # If you chose the "gnomAD_1kG_HGDP" reference panel, there are separate Finnish and non-Finnish European ancestries.

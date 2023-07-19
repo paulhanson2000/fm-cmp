@@ -64,12 +64,11 @@ TODO add blurb about how b37 hg19 CRCh37 are mostly equiv except mitochondria an
 `liftOver` uses the UCSC naming scheme, we need to too.
 ```{r}
 #| output: false
-ucscRefGenomeNaming <- function(config_file) {
+lapply(list(data_config, loci_config, anno_config), function(config_file) {
   config_file[ref_genome %in% c("GRCh37", "b37", "hg19"), ref_genome := "hg19"]
   config_file[ref_genome %in% c("GRCh38",        "hg38"), ref_genome := "hg38"]
   config_file[, ref_genome := factor(ref_genome)]
-} 
-lapply(list(data_config, loci_config, anno_config), ucscRefGenomeNaming)
+})
 ```
 
 ### `liftOver`
@@ -79,7 +78,6 @@ source("inc/liftOver.R")
 
 loci_configs <-
 lapply(union(data_config$ref_genome, misc_config$ref_panel_ref_genome), function(dg) {
-
   loci_config_bed_format <- data.table(
     chrom      = {if(!grepl("chr",loci_config$chr[1])) paste0("chr",loci_config$chr)
                   else                                              loci_config$chr },
@@ -91,7 +89,6 @@ lapply(union(data_config$ref_genome, misc_config$ref_panel_ref_genome), function
   loci_config_lifted <- do.call(rbind,
   lapply(unique(loci_config$ref_genome), function(lg) {
     loci_of_a_ref_genome_bed <- loci_config_bed_format[loci_config$ref_genome == lg] 
-
     if(dg != lg)
       liftOver("third_party/liftover/liftOver",
                loci_of_a_ref_genome_bed,
@@ -182,6 +179,10 @@ names(sumstats) <- basename(data_config$filepath)
 ```
 
 TODO: make automatic which reference panels' code runs based on misc\_config$ref\_panel
+TODO TODO TODO: unify code for 1kG and gnomAD getting VCFs from the internet and merging
+  Adding sample info will be different though.
+  gnomAD filter might be different. (I think both have a variant FILTER, but gnomAD also has an additional sample filter high_quality)
+  Also consider if the user were to provide their own VCF file, possibly with separate sample info
 
 # Reference panel
 ## 1kG
@@ -190,12 +191,11 @@ TODO: make automatic which reference panels' code runs based on misc\_config$ref
 #| output: false
 ref <- seqOpen("../data/ref/1kg/gds_format/1KG_ALL.autosomes.phase3_shapeit2_mvncall_integrated_v5a.20130502.genotypes.gds", readonly=F, allow.duplicate=T)
 
-{ # Add sample info to the GDS file
+# Add sample info to the GDS file
 sample_info <- fread("../data/ref/1kg/sample_info/integrated_call_samples_v3.20130502.ALL.panel")
 stopifnot(identical(seqGetData(ref,"sample.id"), sample_info$sample))
 seqAddValue(ref, "sample.annotation/ancestry", sample_info$super_pop, replace=T)
 seqAddValue(ref, "sample.annotation/gender", sample_info$gender, replace=T)
-}
 ```
 
 ### Filter sumstats using ref panel (1kG)
@@ -230,6 +230,36 @@ sumstats <- mapply(sumstats, data_config$ancestry, SIMPLIFY=F,
 #save(sumstats, samples_of_each_ancestry, file="filtered_sumstats.RData")
 ```
 
+# WIP
+## Get from internet
+```{r}
+{
+if(misc_config$ref_panel == "1kG")
+  ref_panel_files <- paste0("http://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/ALL.chr",1:22,".phase3_shapeit2_mvncall_integrated_v5b.20130502.genotypes.vcf.gz") 
+else if(misc_config$ref_panel == "gnomAD_1kG+HGDP")
+  ref_panel_files <- paste("gs://gcp-public-data--gnomad/release/3.1.2/vcf/genomes/gnomad.genomes.v3.1.2.hgdp_tgp.chr",1:22,".vcf.bgz")
+else
+  ref_panel_files <- misc_config$ref_panel # TODO: allow user to provide their own. Everything *should* mostly already work for this, but I need to test.
+}
+
+lc <- loci_configs[[misc_config$ref_panel_ref_genome]]
+regions_bed_format <- data.table(chrom = lc$chr, chromStart = lc$pos_min, chromEnd = lc$pos_max)
+
+source("inc/Vcfs2Gds.R")
+ref_gds <-
+Vcfs2Gds(ref_panel_files, 
+         output_name = paste0(misc_config$scratch_dir,"/ref_panel.gds"),
+         variant_ids = Reduce(union, lapply(sumstats, '[', j=rsid)),
+         regions = regions_bed_format)
+# TODO: stamp the filename with something unique, probably.
+# TODO: as mentioned here: https://www.biostars.org/p/299110/ and https://www.biostars.org/p/119295/#119308
+  # Chrs can have all sorts of wacky formats, not just "chr#" vs. "#" problems. So add a map.file argument to Vcfs2Gds? But then again the user might also provide a GDS.
+  # Where should the chromosome naming harmonization stuff go??? It's very annoying. Having the user worry about a map.file would also be annoying for them.
+ref <- seqOpen(ref_gds)
+
+# TODO: now to add sample info and stuff.
+```
+
 ## gnomAD 1kG + HGDP subset
 ### Get necssary data from internet
 ```{r}
@@ -250,7 +280,7 @@ lapply(1:nrow(loci_config), function(i) {
     # If bcftools supports this do it here. Otherwise use the seqVCF2GDS info.import field.
   loci[i, system(paste0( "bcftools view",
                          " -r chr",chr,":",pos_min,"-",pos_max,   # TODO: hardcoded again to use "chr#" which is what gnomAD uses; the problem is this code assumes that loci_config uses just "#" which I might change again later
-                         " --include ID==@",all_rsids_file,
+                         " -i ID==@",all_rsids_file,
                          " gs://gcp-public-data--gnomad/release/3.1.2/vcf/genomes/gnomad.genomes.v3.1.2.hgdp_tgp.chr",chr,".vcf.bgz",
                          " > ", l_vcf ))]
 
