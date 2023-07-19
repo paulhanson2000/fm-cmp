@@ -53,6 +53,9 @@ if(!dir.exists(misc_config$scratch_dir)) stop(paste0("Scratch directory ", misc_
 if(misc_config$ref_panel == "1kG"   ) misc_config$ref_panel_ref_genome <- "hg19"
 if(misc_config$ref_panel == "gnomAD_1kG+HGDP") misc_config$ref_panel_ref_genome <- "hg38"
 ```
+```{r}
+
+```
 
 ## `liftOver` loci and annotations
 More efficient and accurate to `liftOver` `config.loci`/`.anno` to the sumstats' reference genomes rather than vice-versa. The summary stats are likely big files, especially before we have had the chance to subset them to only the necessary variants.\
@@ -131,8 +134,6 @@ names(anno_configs) <- unique(data_config$ref_genome)
 # GWAS summary stats
 ```{r}
 #| output: false
-trade_speed_for_memory_efficiency <- F
-
 sumstats <- lapply(1:nrow(data_config), function(r) {
   loci <- loci_configs[[ data_config[r,ref_genome] ]] # Loci with coords lifted to the current data file's ref genome
 
@@ -140,52 +141,18 @@ sumstats <- lapply(1:nrow(data_config), function(r) {
   cols <- setNames(cols, c("chr",   "pos",   "rsid",   "a0",             "a1",              "eaf",   "b",   "se",   "z",   "p",   "n"   ))
   cols <- cols[!is.na(cols)]
 
-  if(trade_speed_for_memory_efficiency) {
+  sumstat <- fread(data_config[r,filepath]) 
+  sumstat <- sumstat[, ..cols]
+  setnames(sumstat, names(cols))
 
-    # AWK command given to fread(). Filters out variants not in any config.loci locus.
-    # If your data is huge but you only care to look at a few regions, this saves memory.
-    # If your data is huge and you want to look at many regions (100+), awk will be much slower.
-      # And if you are planning such a large analysis, you proably have a strong computer with enough memory anyways.
-    # If your data is small, it doesn't matter.
-    chr_pos_preprocess_cmd <- paste0(
-      "awk ",
-      "-v chrs_string='",paste(collapse=' ', loci$chr),     "' ",
-      "-v mins_string='",paste(collapse=' ', loci$pos_min), "' ",
-      "-v maxs_string='",paste(collapse=' ', loci$pos_max), "' ",
-      "'BEGIN {",
-        "getline; print;", # Get header line
-        # Turn the space-delimited strings into arrays
-        "split(chrs_string, chrs, \" \");",
-        "split(mins_string, mins, \" \");",
-        "split(maxs_string, maxs, \" \");",
-      "}",
-      "{",
-        "for(i=0; i<=",nrow(loci),"; i++) {",
-          "if($",data_config[r,chr_col]," == chrs[i] && ",
-             "$",data_config[r,pos_col]," >= mins[i] && ",
-             "$",data_config[r,pos_col]," <= maxs[i]) { ",
-             "print; break;",
-          "}",
-        "}",
-      "}' ",
-      data_config[r,filepath]
-    )
-    sumstat <- fread(cmd = chr_pos_preprocess_cmd, select = unname(cols))
-    setnames(sumstat, names(cols))
-  }
-  else { # Speed! Filter ~after~ just reading the whole thing into memory.
-    sumstat <- fread(data_config[r,filepath]) 
-    sumstat <- sumstat[, ..cols]
-    setnames(sumstat, names(cols))
-
-    sumstat <- do.call(rbind, lapply(1:nrow(loci), function(i) {
-      sumstat[ chr == loci$chr[i]     &
-               pos >= loci$pos_min[i] &
-               pos <= loci$pos_max[i]   ]
-    }))
-  }
+  sumstat <- do.call(rbind, lapply(1:nrow(loci), function(i) {
+    sumstat[ chr == loci$chr[i]     &
+             pos >= loci$pos_min[i] &
+             pos <= loci$pos_max[i]   ]
+  }))
 
   if("eaf" %in% names(sumstat)) sumstat <- sumstat[eaf > 0 & eaf < 1]
+
   sumstat[,chr := factor(chr,levels=c("1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18","19","20","21","22","X","Y","M"))] # TODO: make sure things will line up correctly even if user uses UCSC "chr#" naming or not.
   sumstat[,`:=`(a0=toupper(a0), a1=toupper(a1))]
 
