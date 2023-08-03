@@ -1,17 +1,38 @@
 # Examples: "/tmp", "/scratch", Sys.getenv("SCRATCH")
-misc_config$scratch_dir = "/scratch/phanso1/"
+misc_config$scratch_dir = "scratch/"
 
 misc_config$maf_threshold = 0.005
 
-# Available LD reference panels:
-  # "1kG"    (1000 Genomes)
-  # "gnomAD_1kG+HGDP" (gnomAD v3.1.2 1000 Genomes + Human Genome Diversity Project subset)
-  # TODO: Alternatively, your own reference VCF, BCF, or GDS file(s). If multiple files, write as an R character vector, like so: c("file1.vcf", "file2.gds").
-misc_config$ref_panel = "gnomAD_1kG+HGDP"
+# LD reference panel:
+  # Hands-free options: # TODO: just make all these fully lowercase
+    # "1kG"             (1000 Genomes phase 3)
+    # "1kG_30x"         (1000 Genomes high-coverage 2022 update) TODO
+    # "gnomAD_1kG+HGDP" (gnomAD v3.1.2 1000 Genomes + Human Genome Diversity Project subset)
+  # Or, to specify your own reference panel, provide one of the following:
+    # VCF file(s). If multiple files, write filepaths in an R character vector like so: c("file1.vcf", "file2.vcf"). Make sure all files' samples are the same.
+    # GDS file.
+    # "my_ld", and fill out config.ld if you have pre-computed LD matrices for each locus + for each ancestry.
+  # TODO: support multiple GDS files. BCF files. For VCF/BCF allow samples not to match and do bcftools merge.
+#misc_config$ref_panel = "1kG"
+misc_config$ref_panel = "1kG_30x"
+#misc_config$ref_panel = "gnomAD_1kG+HGDP"
+
+# Your reference panel's reference genome.
+# If you picked a hands-free option like "1kG", or have pre-computed LD labelled with rsIDs, don't worry about this.
+# Examples: "hg19", "GRCh37", "hg38", "GRCh38", "felCat9", "canFam6"
+misc_config$reg_panel_ref_genome = NULL
 
 # If you chose the "gnomAD_1kG_HGDP" reference panel, there are separate Finnish and non-Finnish European ancestries.
 # Should Finnish be included in the EUR ancestry?
 misc_config$gnomad_count_fin_as_eur = F
+
+# If you specified your own reference panel, please specify sample info.
+  # sample_info_file: optional, if your VCF/BCF/GDS file doesn't already contain sample ancestry info.
+  # sample_id_field: if you provided sample_info_file, what is the name of the ID column?
+  # smaple_ancestry_field: what is the name of the ancestry column in your sample info file, or the ancestry field in your VCF/BCF/GDS file(s)?
+misc_config$sample_info_file = NULL
+misc_config$sample_id_field = NULL
+misc_config$sample_ancestry_field = NULL
 
 
 # Available fine-mapping methods:
@@ -20,15 +41,17 @@ misc_config$gnomad_count_fin_as_eur = F
   # (TODO) finemap
   # (TODO) guessfm
   # (TODO) ma-focus
+  # (TODO) mesusie
   # (TODO) mjam
   # (TODO) mscaviar
   # paintor
+  # (TODO) sparsepro
   # susiex
 misc_config$fm_methods = c(
-  "caviar", "caviarbf", "finemap", "guessfm", "ma-focus", "mjam", "mscaviar", "paintor", "susiex"
+  "caviar", "caviarbf", "finemap", "guessfm", "ma-focus", "mesusie", "mjam", "mscaviar", "paintor", "sparsepro", "susiex"
 )
 
 # PAINTOR can incorporate annotation info without the help of fgwas.
 # Use this functionality, or calculate priors for PAINTOR with fgwas like the rest?
-# True or False:
+# TRUE or FALSE:
 misc_config$use_paintor_anno_functionality = F

@@ -19,59 +19,111 @@ library(SNPRelate)
 "%ni%" <- Negate("%in%")
 ```
 
-# Configs
+# Load Configs
 ```{r}
 misc_config <- list()
               source("config/config.misc")
 data_config <- fread("config/config.data")
 loci_config <- fread("config/config.loci")
 anno_config <- fread("config/config.anno")
+  ld_config <- fread("config/config.ld"  )
+chr_nm_map <- fread("config/ucsc_chr_names_map.txt")
 ```
 TODO: printout "stamp" of configs s.t. in the rendered doc, it is clear what was run.
 
+## Hands-free hardcoded reference panels
+```{r}
+if(misc_config$ref_panel == "1kG") {
+  misc_config$ref_panel_ref_genome <- "hg19"
+  misc_config$ref_panel <- paste0("http://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/ALL.chr",1:22,".phase3_shapeit2_mvncall_integrated_v5b.20130502.genotypes.vcf.gz")
+  misc_config$ref_panel <- c(misc_config$ref_panel, "http://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/ALL.chrX.phase3_shapeit2_mvncall_integrated_v1c.20130502.genotypes.vcf.gz")
+  #misc_config$ref_panel <- c(misc_config$ref_panel, "http://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/ALL.chrY.phase3_integrated_v2b.20130502.genotypes.vcf.gz") # TODO: different samples?
+  #misc_config$ref_panel <- c(misc_config$ref_panel, "http://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/ALL.chrMT.phase3_callmom-v0_4.20130502.genotypes.vcf.gz") # TODO: different samples?
+  misc_config$sample_info_file <- "http://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/integrated_call_samples_v3.20130502.ALL.panel"
+  misc_config$sample_id_field <- "sample"
+  misc_config$sample_ancestry_field <- "super_pop"
+} else
+if(misc_config$ref_panel == "1kG_30x") {
+  misc_config$ref_panel_ref_genome <- "hg38"
+  misc_config$ref_panel <- paste0("http://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000G_2504_high_coverage/working/20220422_3202_phased_SNV_INDEL_SV/1kGP_high_coverage_Illumina.chr",1:22,".filtered.SNV_INDEL_SV_phased_panel.vcf.gz")
+  misc_config$ref_panel <- c(misc_config$ref_panel, "http://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000G_2504_high_coverage/working/20220422_3202_phased_SNV_INDEL_SV/1kGP_high_coverage_Illumina.chrX.filtered.SNV_INDEL_SV_phased_panel.v2.vcf.gz")
+  misc_config$sample_info_file <- "http://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000G_2504_high_coverage/20130606_g1k_3202_samples_ped_population.txt"
+  misc_config$sample_id_field <- "SampleID"
+  misc_config$sample_ancestry_field <- "Superpopulation"
+} else
+if(misc_config$ref_panel == "gnomAD_1kG+HGDP") {
+  misc_config$ref_panel_ref_genome <- "hg38"
+  misc_config$ref_panel <- paste0("https://gnomad-public-us-east-1.s3.amazonaws.com/release/3.1.2/vcf/genomes/gnomad.genomes.v3.1.2.hgdp_tgp.chr",c(1:22,"X","Y"),".vcf.bgz") # Only the Amazon links work, otherwise corrupts halfway through vcfs2Gds().
+
+  # gnomAD sample info file has wacky JSON stuff. Extract what we need to a temporary file.
+  sample_info <- fread(cmd="curl https://gnomad-public-us-east-1.s3.amazonaws.com/release/3.1.2/vcf/genomes/gnomad.genomes.v3.1.2.hgdp_1kg_subset_sample_meta.tsv.bgz | zcat")
+  sample_info$pop <- sapply(sample_info$gnomad_population_inference, function(x) ifelse(is.na(x), NA, jsonlite::fromJSON(x)$pop))
+  sample_info[pop=="nfe", pop:="eur"]
+  if(misc_config$gnomad_count_fin_as_eur) sample_info[pop=="fin", pop:="eur"]
+  # gnomAD also recommends using this "high_quality" sample filter: https://gnomad.broadinstitute.org/news/2021-10-gnomad-v3-1-2-minor-release/
+  sample_info <- sample_info[high_quality==TRUE]
+  fwrite(sample_info[,.(s, pop)], paste0(misc_config$scratch_dir,"gnomAD_sample_info.txt"))
+
+  misc_config$sample_info_file <- paste0(misc_config$scratch_dir,"gnomAD_sample_info.txt")
+  misc_config$sample_id_field <- "s"
+  misc_config$sample_ancestry_field <- "pop"
+}
+```
+
 ## Validate input
 ```{r}
-# TODO: Why? Because the rest of the code is cleaner under the assumption all input datasets are valid, and error messages early save the user time.
-  # data
-    # Make sure the data files exist (and maybe check if they're valid too? Can use fread(...,nrows=3) to quickly peek)
-    # Make sure all cols required by all misc_config$fm_methods is there are specified for every data file
-    # Make sure valid reference genomes
-    # Make sure every dataset's ancestry is a valid ancestry in the reference panel too
-      # Make sure the script is robust to whether these ancestry names are capitalized or not
-  # loci: make sure valid reference genomes
-  # anno
-    # Make sure no "+"s in anno names b/c will mess w/ fgwas.
-    # Check anno files all exist (and are proper bed format too? nah)
-  # misc
-    # Check valid reference panel
-      # Check data integreity (checksums)
-if(misc_config$ref_panel %ni% c("1kG", "gnomAD_1kG+HGDP")) stop(paste0("Invalid reference panel: ", misc_config$ref_panel, ". Please correct this in config.misc."))
-# if(any(misc_config$gnomad_eur_ancestries %ni% c("nfe", "fin", "asj")) || length(misc_config$gnomad_eur_ancestries)==0) stop(paste0("")) # TODO:
+# TODO:
+# The rest of the code is cleaner under the assumption all input datasets are valid, and error messages early save the user time.
+# data
+  # data files exist (and maybe check if they're valid too? Can use fread(...,nrows=3) to quickly peek)
+  # all cols required by all misc_config$fm_methods is there are specified for every data file
+  # valid reference genomes
+  # every dataset's ancestry is a valid ancestry in the reference panel too
+    # robust to whether these ancestry names are capitalized or not
+# loci: make sure valid reference genomes
+# anno
+  # Make sure no "+"s in anno names b/c will mess w/ fgwas.
+  # Check anno files all exist (and are proper bed format too? maybe nah)
+# misc
+  # Ref panel
+    # Check files exist if custom reference panel
+    # Sample info
+      # Check that sample_ancestry_field exists in either the sample_info_file or VCF/BCF/GDS file(s)
+      # Check that sample_id_field exists in sample_info_file if given
+      # Check that sample_info IDs match ref_panel (should do this even for hard-coded ref_panels for uniformity)
+    # If pre-computed LD
+      # Make sure no NAs or NaNs
+      # Warn if some loci in config.ld & config.loci don't match
+      # Warn if some ancestries in config.ld & config.data don't match
 if(!dir.exists(misc_config$scratch_dir)) stop(paste0("Scratch directory ", misc_config$scratch_dir, " does not exist. Please create it, or change your desired scratch directory in config.misc."))
-```
-```{r}
-if(misc_config$ref_panel == "1kG"   ) misc_config$ref_panel_ref_genome <- "hg19"
-if(misc_config$ref_panel == "gnomAD_1kG+HGDP") misc_config$ref_panel_ref_genome <- "hg38"
-```
-```{r}
-
 ```
 
 ## `liftOver` loci and annotations
-More efficient and accurate to `liftOver` `config.loci`/`.anno` to the sumstats' reference genomes rather than vice-versa. The summary stats are likely big files, especially before we have had the chance to subset them to only the necessary variants.\
-In addition, it is not recommended (source [1](http://genome.ucsc.edu/FAQ/FAQreleases.html#snpConversion), [2](https://groups.google.com/a/soe.ucsc.edu/g/genome/c/wkgf5DXpwEc/m/wDpsjyDVCQAJ)) to `liftOver` individual variants by their position — converting position via rsID is more accurate.\
-That said, even rsIDs can be ambiguous ([source](https://gnomad.broadinstitute.org/help/why-is-this-variant-linked-to-the-wrong-dbsnp-rsid)), so it's better to avoid `lift`ing`Over` the sumstats if possible.\
-TODO add blurb about how b37 hg19 CRCh37 are mostly equiv except mitochondria and "chr#" vs "#" and link sources, and how GRCh38 and hg38 are equiv AFAIK
+Lift loci and annotations to the data's reference genome(s). Also lift loci to the reference panel's reference genome, for LD calculation later.\
+Better not to lift the sumsmary stats if it can be avoided. They are likely the biggest files, especially before we have had the chance to subset them to only the necessary variants.\
+In addition, it is **not** recommended (source [1](http://genome.ucsc.edu/FAQ/FAQreleases.html#snpConversion), [2](https://groups.google.com/a/soe.ucsc.edu/g/genome/c/wkgf5DXpwEc/m/wDpsjyDVCQAJ), [3](https://annovar.openbioinformatics.org/en/latest/articles/dbSNP/)) to `liftOver` individual variants.\
+Lifting variants by matching their rsID across reference genomes is *more* accurate, but even rsIDs can be ambiguous ([source](https://gnomad.broadinstitute.org/help/why-is-this-variant-linked-to-the-wrong-dbsnp-rsid)).
 
 ### Convert to UCSC naming scheme
-`liftOver` uses the UCSC naming scheme, we need to too.
+`liftOver` uses the UCSC naming scheme, we need to too.\
+[AFAIK, b37, hg19, and GRCh37 sequences are equivalent except in mitochondria and some contigs (exactly what is different nobody seems to know... see this somewhat dubious [source](https://gatk.broadinstitute.org/hc/en-us/articles/360035890711-GRCh37-hg19-b37-humanG1Kv37-Human-Reference-Discrepancies)). Beyond that they have different chromosome naming conventions: hg19 uses "chr#" instead of just "#". AFAIK GRCh38 and hg38 are fully equivalent though.]{.aside}
 ```{r}
 #| output: false
+# TODO: could be more elegant to use a reference genomes synonyms file or something
 lapply(list(data_config, loci_config, anno_config), function(config_file) {
-  config_file[ref_genome %in% c("GRCh37", "b37", "hg19"), ref_genome := "hg19"]
-  config_file[ref_genome %in% c("GRCh38",        "hg38"), ref_genome := "hg38"]
+  config_file[tolower(ref_genome) %in% c("grch36"       ), ref_genome := "hg18"]
+  config_file[tolower(ref_genome) %in% c("grch37", "b37"), ref_genome := "hg19"]
+  config_file[tolower(ref_genome) %in% c("grch38"       ), ref_genome := "hg38"]
   config_file[, ref_genome := factor(ref_genome)]
 })
+if(tolower(misc_config$ref_panel_ref_genome) %in% c("grch36"       )) misc_config$ref_panel_ref_genome <- "hg18"
+if(tolower(misc_config$ref_panel_ref_genome) %in% c("grch37", "b37")) misc_config$ref_panel_ref_genome <- "hg19"
+if(tolower(misc_config$ref_panel_ref_genome) %in% c("grch38"       )) misc_config$ref_panel_ref_genome <- "hg38"
+
+# NOTE: yes future self, this is correct, I'm 100% sure. Leaving this note here so you don't second guess. Rm me once you're comfortable with factors.
+# TODO: would be good if it didn't turn already-properly-named chrs to NA. I.e. should be idempotent
+loci_config$chr <- chr_nm_map$to[match(loci_config$chr, chr_nm_map$from)]
+loci_config$chr <- factor(loci_config$chr, levels=unique(chr_nm_map$to))
 ```
 
 ### `liftOver`
@@ -82,8 +134,7 @@ source("inc/liftOver.R")
 loci_configs <-
 lapply(union(data_config$ref_genome, misc_config$ref_panel_ref_genome), function(dg) {
   loci_config_bed_format <- data.table(
-    chrom      = {if(!grepl("chr",loci_config$chr[1])) paste0("chr",loci_config$chr)
-                  else                                              loci_config$chr },
+    chrom      = loci_config$chr,
     chromStart = loci_config$pos_min,
     chromEnd   = loci_config$pos_max,
     name       = loci_config$locus
@@ -93,17 +144,17 @@ lapply(union(data_config$ref_genome, misc_config$ref_panel_ref_genome), function
   lapply(unique(loci_config$ref_genome), function(lg) {
     loci_of_a_ref_genome_bed <- loci_config_bed_format[loci_config$ref_genome == lg] 
     if(dg != lg)
-      liftOver("third_party/liftover/liftOver",
-               loci_of_a_ref_genome_bed,
-               from_build = lg, to_build = dg)
+      liftOver(loci_of_a_ref_genome_bed,
+               from_build = lg, to_build = dg,
+               liftover_bin="third_party/liftover/liftOver")
     else
       loci_of_a_ref_genome_bed
   })
   )
 
   setnames(setDT(loci_config_lifted), c("chr","pos_min","pos_max","locus"))
-  loci_config_lifted[, chr := sub("chr","",chr)] # Undo UCSC chr naming # TODO: make factor, and make a convenience chrFactor() function to use here and when reading sumstats?
-
+  loci_config_lifted$chr   <- factor(loci_config_lifted$chr, levels=unique(chr_nm_map$to))
+  loci_config_lifted$locus <- factor(loci_config_lifted$locus, levels=unique(loci_config$locus))
   fwrite(loci_config_lifted, paste0("out/liftover/config.loci.",dg), sep=' ')
   loci_config_lifted
 })
@@ -116,10 +167,10 @@ lapply(unique(data_config$ref_genome), function(dg) {
     ag <- anno_config[i,ref_genome]
     if(dg != ag) {
       lifted_bed_file <- paste0("out/liftover/",anno_config[i,name],"-lifted_to_",dg,".bed")
-      liftOver("third_party/liftover/liftOver",
-               anno_config[i,bed_file],
+      liftOver(anno_config[i,bed_file],
                out_file = lifted_bed_file, 
-               from_build = ag, to_build = dg)
+               from_build = ag, to_build = dg,
+               liftover_bin="third_party/liftover/liftOver")
 
       lifted_anno_config[i, `:=`(ref_genome = dg,
                                  bed_file = lifted_bed_file)]
@@ -131,72 +182,105 @@ lapply(unique(data_config$ref_genome), function(dg) {
 names(anno_configs) <- unique(data_config$ref_genome)
 ```
 
-# GWAS summary stats
+
+# Load data
+## GWAS summary stats
 ```{r}
 #| output: false
 sumstats <- lapply(1:nrow(data_config), function(r) {
   loci <- loci_configs[[ data_config[r,ref_genome] ]] # Loci with coords lifted to the current data file's ref genome
 
-  cols <- data_config[r, c( chr_col, pos_col, rsid_col, other_allele_col, effect_allele_col, eaf_col, b_col, se_col, z_col, p_col, n_col)]
-  cols <- setNames(cols, c("chr",   "pos",   "rsid",   "a0",             "a1",              "eaf",   "b",   "se",   "z",   "p",   "n"   ))
+  cols <- data_config[r, c( chr_col, pos_col, rs_id_col, effect_allele_col, other_allele_col, eaf_col, b_col, se_col, z_col, p_col, n_col)]
+  cols <- setNames(cols, c("chr",   "pos",   "rs_id",   "a1",              "a0",             "eaf",   "b",   "se",   "z",   "p",   "n"   ))
   cols <- cols[!is.na(cols)]
 
-  sumstat <- fread(data_config[r,filepath]) 
+  sumstat <- fread(data_config[r,filepath])
   sumstat <- sumstat[, ..cols]
   setnames(sumstat, names(cols))
+
+  sumstat$chr <- chr_nm_map$to[match(sumstat$chr, chr_nm_map$from)]
+  sumstat$chr <- factor(sumstat$chr, levels=unique(chr_nm_map$to))
 
   sumstat <- do.call(rbind, lapply(1:nrow(loci), function(i) {
     sumstat[ chr == loci$chr[i]     &
              pos >= loci$pos_min[i] &
-             pos <= loci$pos_max[i]   ]
+             pos <= loci$pos_max[i] ][, locus := loci$locus[i]]
   }))
-
   if("eaf" %in% names(sumstat)) sumstat <- sumstat[eaf > 0 & eaf < 1]
 
-  sumstat[,chr := factor(chr,levels=c("1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18","19","20","21","22","X","Y","M"))] # TODO: make sure things will line up correctly even if user uses UCSC "chr#" naming or not.
   sumstat[,`:=`(a0=toupper(a0), a1=toupper(a1))]
 
-  # Infer some columns from the others if possible. For example, z-score can be calculated from β and SE.
+  # Infer some columns from the others if possible. For axample, z-score can be calculated from β and SE.
   if(data_config[r, is.na(z_col) & !is.na(b_col) & !is.na(se_col)]) sumstat[, z := b/se]
   # TODO: possible to reverse-engineer N from p/z/se/af if n_col not given?
+
+  # TODO: meh, maybe just compare w/ $chr $pos etc. directly instead of creating these IDs?
+    # No, ID col is good b/c passing ids of this format is the clearest interface for functions like vcfs2Gds and ldCalc
+    # But then again, could just reconstruct the ids e/t time? No, too much, b/c'd have to do the Reduce around the paste(), too much.
+  #if(data_config[r, !is.na(chr_col) & !is.na(pos_col) & !is.na(other_allele_col) & !is.na(effect_allele_col)])
+    #sumstat$chrpos_id <- paste0(sumstat$chr,":",sumstat$pos,"_",sumstat$a0,"_",sumstat$a1) # NOTE: using chr:pos_ref_alt instead of all ":"s, but doesn't matter, split by both : and _ at all times anyways.
+
+  # TODO: add support for chrpos_id_col. Infer chr, pos, a0, a1 cols if chrpos ids are given
 
   sumstat
 })
 names(sumstats) <- basename(data_config$filepath)
 ```
 
-TODO: make automatic which reference panels' code runs based on misc\_config$ref\_panel
-TODO TODO TODO: unify code for 1kG and gnomAD getting VCFs from the internet and merging
-  Adding sample info will be different though.
-  gnomAD filter might be different. (I think both have a variant FILTER, but gnomAD also has an additional sample filter high_quality)
-  Also consider if the user were to provide their own VCF file, possibly with separate sample info
 
-# Reference panel
-## 1kG
-### Load
+## Reference panel
 ```{r}
-#| output: false
-ref <- seqOpen("../data/ref/1kg/gds_format/1KG_ALL.autosomes.phase3_shapeit2_mvncall_integrated_v5a.20130502.genotypes.gds", readonly=F, allow.duplicate=T)
+if(any(misc_config$ref_panel != "my_ld")) {
 
-# Add sample info to the GDS file
-sample_info <- fread("../data/ref/1kg/sample_info/integrated_call_samples_v3.20130502.ALL.panel")
-stopifnot(identical(seqGetData(ref,"sample.id"), sample_info$sample))
-seqAddValue(ref, "sample.annotation/ancestry", sample_info$super_pop, replace=T)
-seqAddValue(ref, "sample.annotation/gender", sample_info$gender, replace=T)
+  if(tools::file_ext(misc_config$ref_panel[1]) == "gds") {
+    ref_gds_file <- misc_config$ref_panel
+
+  } else { # Take given VCF(s) and convert to GDS
+    regions_bed_format <- loci_configs[[misc_config$ref_panel_ref_genome]][,.(chr,pos_min,pos_max)]
+
+    # Create unique filename based on input parameters. If already exists, don't need to recompute.
+    ref_gds_file <- paste0(misc_config$scratch_dir,"/",digest::digest(list(misc_config$ref_panel,regions_bed_format,chr_nm_map)),".gds")
+    if(!file.exists(ref_gds_file)) {
+      source("inc/vcfs2Gds.R")
+      vcfs2Gds(files = misc_config$ref_panel, 
+               output_name = ref_gds_file,
+               regions = regions_bed_format,
+               exclude_annos = c("FORMAT","INFO"),
+               chr_nm_map = chr_nm_map)
+   }
+  }
+  ref <- seqOpen(ref_gds_file)
+}
+
+# TODO: TODO:
+# If ref panel has no rsids, then query for them.
+  # How? bcftools directly, or bioconductor thingy
+
+
 ```
 
-### Filter sumstats using ref panel (1kG)
-First, filter out useless/unusable variants from the summary stats: \
-1. If variant's ancestry-specific MAF is 0 for that sumstat file's ancestry
-2. If variant is not within the bounds of any loci specified in `locus.config`
-3. If variant not also present in reference panel
+## Reference panel `sample_info`
+```{r}
+if(any(misc_config$ref_panel != "my_ld")) {
+  sample_info <- fread(misc_config$sample_info_file)[, c(misc_config$sample_id_field, misc_config$sample_ancestry_field), with=F]
+  setnames(sample_info, c("id","ancestry"))
+  sample_info$ancestry <- factor(toupper(sample_info$ancestry))
+}
+```
+
+
+# Filter sumstats using ref panel
+Only keep variants which:
+1. Are within the loci specified in `config.loci`
+2. Have ancestry-specific MAF above `r misc_config$maf_threshold` for that sumstat file's ancestry
+4. Are present in both sumstats and reference panel
 ```{r}
 #| output: false
-seqSetFilterChrom(ref, loci_configs$hg19$chr,
-               from.bp=loci_configs$hg19$pos_min,
-                 to.bp=loci_configs$hg19$pos_max)
+loci <- loci_configs[[misc_config$ref_panel_ref_genome]]
 
-samples_of_each_ancestry <- tapply(seqGetData(ref,"sample.id"), INDEX=seqGetData(ref,"sample.annotation/ancestry"), FUN = identity) 
+seqSetFilterChrom(ref, as.character(loci$chr), loci$pos_min, loci$pos_max, is.num=F)
+
+samples_of_each_ancestry <- tapply(sample_info$id, INDEX=sample_info$ancestry, FUN = identity) 
 ancestries_MAFs <- lapply(samples_of_each_ancestry, function(samples_of_an_ancestry) {
     seqSetFilter(ref, sample.id = samples_of_an_ancestry)
     seqAlleleFreq(ref, minor=T)
@@ -208,133 +292,19 @@ invisible(sapply(data_config$ancestry, function(anc) if(anc %ni% names(ancestrie
 sumstats <- mapply(sumstats, data_config$ancestry, SIMPLIFY=F,
   FUN = function(s, anc) {
     ancestry_MAFs <- ancestries_MAFs[[anc]]
+
+    # TODO: also PASS the vcf FILTER?
+    # seqGetData(ref, "annotation/filter")=="PASS"
+
     seqSetFilter(ref, action = "push+intersect", variant.sel = ancestry_MAFs > misc_config$maf_threshold)
 
     s <- s[rsid %in% seqGetData(ref,"annotation/id")]
     seqFilterPop(ref)
     s
 })
-#save(sumstats, samples_of_each_ancestry, file="filtered_sumstats.RData")
+#save(sumstats, samples_of_each_ancestry, file="sumstats-filtered.RData")
 ```
 
-# WIP
-## Get from internet
-```{r}
-{
-if(misc_config$ref_panel == "1kG")
-  ref_panel_files <- paste0("http://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/ALL.chr",1:22,".phase3_shapeit2_mvncall_integrated_v5b.20130502.genotypes.vcf.gz") 
-else if(misc_config$ref_panel == "gnomAD_1kG+HGDP")
-  ref_panel_files <- paste0("gs://gcp-public-data--gnomad/release/3.1.2/vcf/genomes/gnomad.genomes.v3.1.2.hgdp_tgp.chr",1:22,".vcf.bgz")
-else
-  ref_panel_files <- misc_config$ref_panel # TODO: allow user to provide their own. Everything *should* mostly already work for this, but I need to test.
-}
-
-lc <- loci_configs[[misc_config$ref_panel_ref_genome]]
-regions_bed_format <- data.table(chrom = lc$chr, chromStart = lc$pos_min, chromEnd = lc$pos_max)
-
-source("inc/Vcfs2Gds.R")
-ref_gds_filepath <-
-Vcfs2Gds(ref_panel_files, 
-         output_name = paste0(misc_config$scratch_dir,"/ref_panel.gds"),
-         variant_ids = Reduce(union, lapply(sumstats, '[', j=rsid)),
-         regions = regions_bed_format)
-# TODO: stamp the filename with something unique, probably.
-# TODO: as mentioned here: https://www.biostars.org/p/299110/ and https://www.biostars.org/p/119295/#119308
-  # Chrs can have all sorts of wacky formats, not just "chr#" vs. "#" problems. So add a map.file argument to Vcfs2Gds? But then again the user might also provide a GDS.
-  # Where should the chromosome naming harmonization stuff go??? It's very annoying. Having the user worry about a map.file would also be annoying for them.
-ref <- seqOpen(ref_gds_filepath)
-
-# TODO: now to add sample info and stuff.
-```
-
-## gnomAD 1kG + HGDP subset
-### Get necssary data from internet
-```{r}
-# TODO: move this code chunk to separate file, then wrap that in an if( ! already_exists)
-# TODO: paste0(misc_config$scratch_dir...) filenames too wordy, predefine them or s/t to be more concise and avoid bugs
-all_rsids <- Reduce(union, lapply(sumstats, '[', j=rsid))
-all_rsids_file <- paste0(misc_config$scratch_dir,"/all_rsids.txt")
-writeLines(all_rsids, all_rsids_file)
-
-lapply(1:nrow(loci_config), function(i) {
-  loci <- loci_configs[[misc_config$ref_panel_ref_genome]]
-
-  l_vcf <- paste0(misc_config$scratch_dir,"/",loci[i,locus],"_gnomad.vcf")
-  l_gds <- paste0(misc_config$scratch_dir,"/",loci[i,locus],"_gnomad.gds")
-
-  # TODO: only take the INFO fields I need.
-    # IMPORTANT! Easy thing that's really worth doing before scaling up to more loci.
-    # If bcftools supports this do it here. Otherwise use the seqVCF2GDS info.import field.
-  loci[i, system(paste0( "bcftools view",
-                         " -r chr",chr,":",pos_min,"-",pos_max,   # TODO: hardcoded again to use "chr#" which is what gnomAD uses; the problem is this code assumes that loci_config uses just "#" which I might change again later
-                         " -i ID==@",all_rsids_file,
-                         " gs://gcp-public-data--gnomad/release/3.1.2/vcf/genomes/gnomad.genomes.v3.1.2.hgdp_tgp.chr",chr,".vcf.bgz",
-                         " > ", l_vcf ))]
-
-  # TODO: use parallel=<> param for more speed
-  seqVCF2GDS(l_vcf, l_gds, storage.option="ZIP_RA", digest=F) # See ?seqRecompress: VCF2GDS conversion takes tons of memory w/ default compression. Better to use lower compression during conversion, then use seqRecompress() after. No checksum digest b/c I'm a gangsta, totally not b/c I'm impatient
-  #seqRecompress(    l_gds,               "ZIP_RA") # TODO: Could also use LZ4 b/c is fast, but what if data is huge? Let user choose.
-  unlink(l_vcf)
-})
-
-unlink("*.tbi") # Tabix index files clutter the working directory when you access VCF files over the internet, remove these. 
-unlink(all_rsids_file)
-
-# TODO: stamp final gds filename w/ UUID or s/t.
-     seqMerge(paste0(misc_config$scratch_dir,"/",loci_config$locus,"_gnomad.gds"), paste0(misc_config$scratch_dir,"/gnomad.gds"), storage.option="ZIP_RA", digest=F)
-seqRecompress(paste0(misc_config$scratch_dir,"/gnomad.gds"),"LZMA")
-       unlink(paste0(misc_config$scratch_dir,"/",loci_config$locus,"_gnomad.gds"))
-```
-
-### Load
-```{r}
-ref <- seqOpen(paste0(misc_config$scratch_dir,"/gnomad.gds"), readonly=F)
-
-{ # Add sample info to the GDS file.
-sample_info <- fread("../data/ref/gnomad_1kg+hgdp/sample_info/gnomad.genomes.v3.1.2.hgdp_1kg_subset_sample_meta.tsv")
-sample_info$pop <- sapply(sample_info$gnomad_population_inference, function(x) ifelse(is.na(x), NA, jsonlite::fromJSON(x)$pop))
-sample_info <- sample_info[match(seqGetData(ref,"sample.id"), s)]
-
-identical(sample_info$s, seqGetData(ref,"sample.id"))
-
-seqAddValue(ref, "sample.annotation/ancestry", sample_info$pop, replace=T)
-high_quality <- sample_info$high_quality
-high_quality[is.na(high_quality)] <- FALSE # TODO: make cleaner (how?) It's just the first sample that is NA.
-seqAddValue(ref, "sample.annotation/high_quality", high_quality, replace=T) # Filter recommended by gnomAD, see https://gnomad.broadinstitute.org/news/2021-10-gnomad-v3-1-2-minor-release/
-}
-```
-
-### Filter sumstats using ref panel (gnomAD 1kG + HGDP subset)
-```{r}
-seqSetFilterChrom(ref, loci_configs$hg38$chr, # Already got only the necessary variants from the internet, but just for clarity
-               from.bp=loci_configs$hg38$pos_min,
-                 to.bp=loci_configs$hg38$pos_max)
-seqSetFilter(ref, action="push+intersect", variant.sel = seqGetData(ref, "annotation/filter")=="PASS")
-seqSetFilter(ref, action="push+intersect",  sample.sel = seqGetData(ref, "sample.annotation/high_quality"))
-seqFilterPush(ref) # The above filters will remain on everything else we do from now on.
-
-samples_of_each_ancestry <- tapply(seqGetData(ref,"sample.id"), INDEX=seqGetData(ref,"sample.annotation/ancestry"), FUN = identity) 
-# Should Finnish be included in the European ancestry group? Decided by config.misc.
-if(misc_config$gnomad_count_fin_as_eur) { samples_of_each_ancestry$eur <- union(samples_of_each_ancestry$nfe, samples_of_each_ancestry$fin)
-} else                                  { samples_of_each_ancestry$eur <-       samples_of_each_ancestry$nfe                               }
-
-ancestries_MAFs <- lapply(samples_of_each_ancestry, function(samples_of_an_ancestry) {
-    seqSetFilter(ref, action="push+intersect", sample.id = samples_of_an_ancestry)
-    af <- seqAlleleFreq(ref, minor=T)
-    seqFilterPop(ref)
-    af
-}) 
-
-sumstats <- mapply(sumstats, data_config$ancestry, SIMPLIFY=F, FUN = function(s, anc) {
-    anc <- tolower(anc)
-    ancestry_MAFs <- ancestries_MAFs[[anc]]
-    seqSetFilter(ref, action="push+intersect", variant.sel = ancestry_MAFs > misc_config$maf_threshold)
-
-    s <- s[rsid %in% seqGetData(ref,"annotation/id")]
-    seqFilterPop(ref)
-    s
-})
-```
 
 # Annotation
 ## Add Annotation Columns
@@ -342,7 +312,7 @@ sumstats <- mapply(sumstats, data_config$ancestry, SIMPLIFY=F, FUN = function(s,
 # TODO: PAINTOR's script is fast, but would be more elegant to do in R than system calls to Python
 anno_colss <- mapply(sumstats, 1:length(sumstats), SIMPLIFY=F, FUN = function(sumstat,i) {
   scratch_dir <- misc_config$scratch_dir
-  sumstat$chr <- paste0("chr",sumstat$chr)
+  sumstat$chr <- paste0("chr",sumstat$chr) # TODO:TODO:TODO:
   fwrite(sumstat[, .(chr,pos)], paste0(scratch_dir,"/sumstat",i), sep=' ')
 
   writeLines(anno_config$bed_file, paste0(scratch_dir,"/config.anno.tmp"))
@@ -373,10 +343,13 @@ lapply(sumstats, function(s) {
        pos <= loci_config$pos_max[l],
        `:=`(locus=l, SEGNUMBER=l)       ]
 })})
+#save(sumstats, samples_of_each_ancestry, file="sumstats-filtered-annotated.RData")
 ```
 
 ### fgwas
 ```{r}
+# TODO: Move most of this fgwas stuff to a separate function
+
 if(!dir.exists("in/fgwas")) dir.create("in/fgwas")
 if(!dir.exists("out/fgwas")) dir.create("out/fgwas")
 
@@ -411,12 +384,12 @@ fgwasGetBestLikelihoodAnnos <- function(sumstat_file, annos_to_try, annos_acc, b
 }
 # The above function is recursive.
 # tailr::loop_transform makes it slightly faster and makes sure it doesn't overflow the stack, because R doesn't implement tail recursion.
-  # (Tail recursion is when you don't need to hold all recursive calls in memory if your recursive function returns only a call to itself or a final value.)
+  # (Tail recursion is when you don't need to hold all recursive calls in memory because your recursive function returns only either a call to itself or a final value.)
 fgwasGetBestLikelihoodAnnos <- tailr::loop_transform(fgwasGetBestLikelihoodAnnos)
 
 # Tests which penalty value has the best cross-validation likelihood, given the model fgwasGetBestLikelihoodModel()
 fgwasGetBestXValidationPenalty <- function(sumstat_file, annos) {
-  # TODO: Does f(model,penalty) have only one minimum? If so, could optimize by making more intelligent choices of penalty. 
+  # TODO: Does f(model,penalty) have only one minimum? If so, could optimize by making more intelligent steps than just 0.05 intervals.
   # TODO: Go finer than steps of 0.05?
   penalties <- seq(0, 1, 0.05)
 
@@ -442,7 +415,7 @@ fgwasGetBestXValidationPenalty <- function(sumstat_file, annos) {
 
 # Iteratively drops annos from the model, until the cross-validation likelihood is maximized.
 fgwasGetBestXValidatedAnnos <- function(sumstat_file, xv_penalty, annos, best_xv_llk) {
-  # TODO: Here I assume that dropping an anno in the middle of the model *might* cause an anno earlier in the model to now also increase the llk if dropped, even if that wasn't the case before dropping the middle anno.
+  # TODO: Here I assume that dropping an anno in the middle of the model *might* cause an anno earlier in the model to now also become worth it to drop the llk if dropped, even if that wasn't the case before dropping the middle anno.
     # This might be overly cautious, in which case, this could be optimized by only needing to traverse the model once, dropping whatever increases the llk without having to look back.
   xv_llks <- sapply(annos, function(anno_to_drop) { # TODO: embarassingly parallel lapply
     fgwas_out_prefix <- paste0("out/fgwas/drop_",anno_to_drop,"-",sumstat_file)
@@ -500,10 +473,9 @@ lapply(sumstats, function(s) { # TODO: embarassingly parallel lapply
 ## Subset
 Split the summary stats into sets of subsets, one per locus.
 ```{r}
-sumstats <- lapply(sumstats, '[', order(rsid)) # Things remain sorted after subsetting.
+sumstats <- lapply(sumstats, '[', order(rsid)) # TODO: prefer chr:pos:allele IDs
 subset_sumstatss <- lapply(1:nrow(loci_config), function(r) {
                     mapply(sumstats, data_config$ref_genome, SIMPLIFY=F, FUN = function(s, ref_genome) {
-
   s[ chr == loci_configs[[ref_genome]][r,chr]     &
      pos >= loci_configs[[ref_genome]][r,pos_min] &
      pos <= loci_configs[[ref_genome]][r,pos_max] ]
@@ -512,12 +484,8 @@ names(subset_sumstatss) <- loci_config$locus
 ```
 
 # LD
-Calculate LD per ancestry per locus.\
-This is more space-efficient than calculating LD per dataset per locus, assuming the datasets have most of their variants in common (which they should!—or else what is the point of multi-dataset finemapping?).
+Calculate LD per ancestry per locus.
 ```{r}
-# TODO: consider: generating subsets of sumstats and holding them all in memory? Or just holding the rsids necessary to subset each sumstat _later on_?
-  # Could actualy be more concise to have just the rsids and subset as I go.
-
 # Signed Pearson r.
 # Returned LD matrix's rows/cols are sorted to match the order of the given rs_ids.
 # Filters on the GDS file ~are~ taken into account. The GDS file will be returned with the same filters as before.
@@ -581,6 +549,14 @@ ld_rsid_orders <-
 
 save(ld_rsid_orders, file="in/ld/ld_rsid_orders.RData") # TODO: Save as separate files, with one col of just rsids? This way, LD could be used by non-R programs more easily.
 ```
+
+
+# TODO TODO
+# Do allele switching so that sumstats and LD match
+```{r}
+
+```
+
 
 # Run Fine-Mapping Methods
 ## SuSiEx

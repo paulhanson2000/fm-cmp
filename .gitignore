@@ -1,8 +1,13 @@
 data
+*.vcf
 *.gds
 *.ld
 *.gz
+*.tbi
+*.csi
 *.RData
+
+scratch/
 
 /.quarto/
 *.html
