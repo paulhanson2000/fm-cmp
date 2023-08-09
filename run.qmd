@@ -230,33 +230,113 @@ names(sumstats) <- basename(data_config$filepath)
 
 ## Reference panel
 ```{r}
-if(any(misc_config$ref_panel != "my_ld")) {
+if(any(misc_config$ref_panel != "my_ld")) { # TODO: replace this and future such checks w/ a proper ref_panel_is_ld variable or s/t
+  regions_bed_format <- loci_configs[[misc_config$ref_panel_ref_genome]][,.(chr,pos_min,pos_max)]
+  # TODO: if ref and ALL sumstats are of the same build, could be more specific and give the chr,pos-1,pos of the variants in the sumstats as regions instead. Would make resuling ref panel file leaner and faster to obtain over the internet.
 
-  if(tools::file_ext(misc_config$ref_panel[1]) == "gds") {
-    ref_gds_file <- misc_config$ref_panel
+  # Create unique filename based on input parameters. If already exists, don't need to recompute.
+  ref_gds_file <- paste0(misc_config$scratch_dir,"/",digest::digest(list(misc_config$ref_panel,regions_bed_format,chr_nm_map)),".gds")
+  if(!file.exists(ref_gds_file)) {
 
-  } else { # Take given VCF(s) and convert to GDS
-    regions_bed_format <- loci_configs[[misc_config$ref_panel_ref_genome]][,.(chr,pos_min,pos_max)]
+    if(tools::file_ext(misc_config$ref_panel[1]) == "gds") {
+      # Make a copy s.t. the user's original GDS file will not be modified.
+        # Also slim the copy down to only the required regions.
+      tmp <- seqOpen(misc_config$ref_panel)
+      seqSetFilterChrom(tmp, regions_bed_format$chr, # TODO: use chr_nm_map, to deal w/ chr naming styles wackier than just "chr" prefix (handled by default ignore.chr.prefix="chr"). And then rename the chrs in the copy.
+                   from.bp = regions_bed_format$pos_min,
+                     to.bp = regions_bed_format$pos_max)
+      seqExport(ref, ref_gds_file, info.var="", fmt.var="")
+      seqClose(misc_config$ref_panel); rm(tmp)
 
-    # Create unique filename based on input parameters. If already exists, don't need to recompute.
-    ref_gds_file <- paste0(misc_config$scratch_dir,"/",digest::digest(list(misc_config$ref_panel,regions_bed_format,chr_nm_map)),".gds")
-    if(!file.exists(ref_gds_file)) {
+    } else { # Take given VCF(s) and convert to GDS
       source("inc/vcfs2Gds.R")
       vcfs2Gds(files = misc_config$ref_panel, 
                output_name = ref_gds_file,
                regions = regions_bed_format,
                exclude_annos = c("FORMAT","INFO"),
-               chr_nm_map = chr_nm_map)
-   }
+               chr_nm_map = chr_nm_map,
+               scratch_dir = misc_config$scratch_dir)
+    }
   }
-  ref <- seqOpen(ref_gds_file)
+  ref <- seqOpen(ref_gds_file, readonly=F)
 }
 
-# TODO: TODO:
-# If ref panel has no rsids, then query for them.
-  # How? bcftools directly, or bioconductor thingy
+
+{ if(all(misc_config$ref_panel == "my_ld")) refpanel_ids <- NULL # TODO: Reduce(union, etc.. Maybe Reduce(union, lapply(ld_config$filepath, fread, nrow=1)))
+  else                                      ref_panel_ids <- seqGetData(ref,"annotation/id") }
+
+# TODO:TODO: TEMPORARY space for my_ld ID stuff
+ld <- read.table("../GCKR_AS", header=T, row.names=1, sep=' ', check.names=F)
+identical(rownames(ld), colnames(ld))
+setDT(ld)
+setattr(ld,"row.names",NULL)
+fwrite(ld, "../GCKR_AS_no_rn", sep=' ')
 
 
+# 1. reformat this LD to plain matrix... w/ colnames (MANUAL, not in this script's code)
+  # Do fwrite(setDT(read.table(<FILE>, headet=T, row.names=1, sep=' ', check.names=F)))
+  # OR just cut or awk or s/t. Nah can't get it to work
+# 2. read the ids from ecah file (tried readLines, but'd have to strsplit)
+ids <- names(fread("../GCKR_AS",nrow=0))
+# TODO:TODO: TEMPORARY
+
+
+
+# If ref panel has no rsids,get some
+if(!any(grepl("^rs", ref_panel_ids))) { # TODO: Actually can skip this if ref panel and ALL sumstats are of the same build. Can just use ch:pos:allele for e/t then.
+
+  # Much faster to download the dbSNP file and access it locally. TODO: maybe if ~<500 variants, just use URL
+  dbsnp_vcf <- {
+    if      (misc_config$ref_panel_ref_genome == "hg19") "GCF_000001405.25.gz"
+    else if (misc_config$ref_panel_ref_genome == "hg38") "GCF_000001405.40.gz"
+    else stop("TODO")
+  }
+  if(!file.exists(dbsnp_vcf)) {
+    message("Downloading dbSNP file locally for faster access.") # TODO: better message
+    download.file(url = paste0("https://ftp.ncbi.nih.gov/snp/latest_release/VCF/",dbsnp_vcf)) # TODO: put in better place than just working dir
+    download.file(url = paste0("https://ftp.ncbi.nih.gov/snp/latest_release/VCF/",dbsnp_vcf,".tbi")) # TODO: put in better place than just working dir
+  }
+
+  source("inc/bcftoolsPipableCmd.R")
+  bcftools_cmd <- bcftoolsPipableCmd(
+    files = dbsnp_vcf,
+    regions = data.table(seqGetData(ref,"chromosome"), seqGetData(ref,"position")-1, seqGetData(ref,"position")),
+    query = "%ID\t%CHROM\t%POS\t%REF\t%ALT\n",
+    chr_nm_map = chr_nm_map,
+    scratch_dir = misc_config$scratch_dir)
+
+  dbsnp_var_id_info <- fread(cmd = bcftools_cmd, col.names=c("rs_id", "chr", "pos", "ref", "alt"))
+  ref_var_id_info <- data.table(chr=seqGetData(ref,"chromosome"), pos=seqGetData(ref,"position"), ref=seqGetData(ref,"$ref"), alt=seqGetData(ref,"$alt")) # TODO: for my_ld, make this same thing but from parsed chr:pos IDs
+
+  tmp <- dbsnp_var_id_info[
+           ref_var_id_info,
+           on=.(chr,pos)
+         ][
+           mapply(i.ref,i.alt,ref,alt, FUN = function(ir,ia,r,a)
+             all( c(ir,ia) %in% c(r,strsplit(a,',')[[1]]) ))
+         ][
+           ref_var_id_info,
+           on=c("chr","pos",i.ref="ref",i.alt="alt"),
+           roll=T,
+           mult="first"
+         ]
+  identical(tmp$chr, ref_var_id_info$chr)
+  identical(tmp$pos, ref_var_id_info$pos)
+  identical(tmp$i.ref, ref_var_id_info$ref)
+  identical(tmp$i.alt, ref_var_id_info$alt)
+  # TODO: Seems OK, but just quddruple-check that this is actaully correct b/c I'm not 100% confident w/ join operations yet.
+    # sum(is.na(tmp$rs_id) | duplicated(tmp$rs_id)) / nrow(tmp) is ~5% which seems a bit high.
+    # Then again this could just be b/c multiallelics are decomposed in the ref panel but not in dbSNP?
+
+  seqAddValue(ref, "annotation/id", tmp$rs_id, replace=T)
+
+  # Filter variants w/ duplicate rsID (indicative of variants in the reference panel which have been merged in newer versions of dbSNP)
+  # Filter variants w/  missing  rsID (                                                             withdrawn                         )
+  # TODO: use rsID synonyms and stuff to try to keep as many variants as possible?
+  seqSetFilter(ref, variant.sel = !duplicated(tmp$rs_id) & !is.na(tmp$rs_id))
+
+  rm(tmp, ref_var_id_info, dbsnp_var_id_info)
+}
 ```
 
 ## Reference panel `sample_info`
@@ -273,32 +353,44 @@ if(any(misc_config$ref_panel != "my_ld")) {
 Only keep variants which:
 1. Are within the loci specified in `config.loci`
 2. Have ancestry-specific MAF above `r misc_config$maf_threshold` for that sumstat file's ancestry
-4. Are present in both sumstats and reference panel
+3. Are present in both sumstats and reference panel
 ```{r}
 #| output: false
 loci <- loci_configs[[misc_config$ref_panel_ref_genome]]
 
-seqSetFilterChrom(ref, as.character(loci$chr), loci$pos_min, loci$pos_max, is.num=F)
+seqSetFilterChrom(ref, as.character(loci$chr), loci$pos_min, loci$pos_max, is.num=F, intersect=T)
 
 samples_of_each_ancestry <- tapply(sample_info$id, INDEX=sample_info$ancestry, FUN = identity) 
-ancestries_MAFs <- lapply(samples_of_each_ancestry, function(samples_of_an_ancestry) {
+ancestries_maf_mac_miss <- lapply(samples_of_each_ancestry, function(samples_of_an_ancestry) {
     seqSetFilter(ref, sample.id = samples_of_an_ancestry)
-    seqAlleleFreq(ref, minor=T)
-}) 
+    seqGetAF_AC_Missing(ref, minor=T)
+})
 seqResetFilter(ref, variant=F)
 
-invisible(sapply(data_config$ancestry, function(anc) if(anc %ni% names(ancestries_MAFs)) { print(paste("ERROR: Ancestry",anc,"mentioned in config.data is not an ancestry in the reference panel:", paste(collapse=", ", names(ancestries_MAFs)), "\nPlease remove this dataset from config.data, or if this was just a typo, change the ancestry name to match one of those in the reference panel.")); stop() })) # TODO: this belongs earlier, when loading in the data. But a nice sanity check to have for now.
+invisible(sapply(data_config$ancestry, function(anc) if(anc %ni% names(ancestries_maf_mac_miss)) { print(paste("ERROR: Ancestry",anc,"mentioned in config.data is not an ancestry in the reference panel:", paste(collapse=", ", names(ancestries_MAFs)), "\nPlease remove this dataset from config.data, or if this was just a typo, change the ancestry name to match one of those in the reference panel.")); stop() })) # TODO: this belongs earlier, when loading in the data. But a nice sanity check to have for now.
 
 sumstats <- mapply(sumstats, data_config$ancestry, SIMPLIFY=F,
   FUN = function(s, anc) {
-    ancestry_MAFs <- ancestries_MAFs[[anc]]
+    ancestry_maf_mac_miss <- ancestries_maf_mac_miss[[anc]]
 
-    # TODO: also PASS the vcf FILTER?
+    # TODO: also PASS the FILTER?
     # seqGetData(ref, "annotation/filter")=="PASS"
+    
 
-    seqSetFilter(ref, action = "push+intersect", variant.sel = ancestry_MAFs > misc_config$maf_threshold)
+    my_filter <- rep(T, sum(seqGetFilter(ref)$variant.sel))
+    # TODO: multiallelic filter using seqNumAllele()?
+    if(!anyNA(filt(ref)))
+      my_filter <- my_filter & filt(ref) == "PASS" # TODO: is bcftools annotate -x 'FORMAT,INFO' removing FILTER?
+    if(!is.null(misc_config$maf_threshold))
+      my_filter <- my_filter & ancestry_maf_mac_miss$af > misc_config$maf_threshold
+    if(!is.null(misc_config$mac_threshold))
+      my_filter <- my_filter & ancestry_maf_mac_miss$ac > misc_config$mac_threshold
+    if(!is.null(misc_config$missingness_threshold))
+      my_filter <- my_filter & ancestry_maf_mac_miss$miss > misc_config$missingness_threshold
 
-    s <- s[rsid %in% seqGetData(ref,"annotation/id")]
+    seqSetFilter(ref, action = "push+intersect", variant.sel = my_filter)
+
+    s <- s[rs_id %in% seqGetData(ref,"annotation/id")]
     seqFilterPop(ref)
     s
 })
@@ -319,7 +411,7 @@ anno_colss <- mapply(sumstats, 1:length(sumstats), SIMPLIFY=F, FUN = function(su
 
   # TODO: put this virtualenv cruft in misc$scratch_dir at least, if you're going to keep using PAINTOR's script 
   if(!dir.exists("py_env")) system("virtualenv py_env; source py_env/bin/activate; python -m pip install numpy")
-  system(paste0("source py_env/bin/activate; python3 ../third_party/PAINTOR_V3.0/PAINTOR_Utilities/AnnotateLocus.py -o ",scratch_dir,"/anno_cols.txt -c chr -p pos -i ",scratch_dir,"/config.anno.tmp -l ",scratch_dir,"/sumstat",i))
+  system(paste0("source py_env/bin/activate; python3 third_party/PAINTOR_V3.0/PAINTOR_Utilities/AnnotateLocus.py -o ",scratch_dir,"/anno_cols.txt -c chr -p pos -i ",scratch_dir,"/config.anno.tmp -l ",scratch_dir,"/sumstat",i))
 
   anno_cols <- fread(paste0(scratch_dir,"/anno_cols.txt"))
   names(anno_cols) <- anno_config$name

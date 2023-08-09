@@ -2,6 +2,8 @@
 misc_config$scratch_dir = "scratch/"
 
 misc_config$maf_threshold = 0.005
+misc_config$mac_threshold = 20
+misc_config$missingness_threshold = NULL
 
 # LD reference panel:
   # Hands-free options: # TODO: just make all these fully lowercase

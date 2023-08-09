@@ -1,6 +1,7 @@
 bcftoolsPipableCmd <- function(files,
-                               output_name=NULL, output_type=c("z","v","b","u"),
+                               output_name=NULL, output_type=NULL,
                                regions=NULL, variant_ids=NULL, sample_ids=NULL,
+                               query=NULL,
                                chr_nm_map=NULL, exclude_annos=NULL, extra_cmds=NULL,
                                scratch_dir="/tmp", bcftools_bin="bcftools") {
   #' bcftoolsPipableCmd
@@ -9,10 +10,11 @@ bcftoolsPipableCmd <- function(files,
   #'
   #' @param files Character vector of VCF/BCF file paths and/or URLs. If multiple files, they will be concatenated, but must have the same sample columns. Combination will be much faster if no regions are given to subset by, the files are either all VCF or all BCF, and all their headers are compatible (useful to combine VCFs split by chromosome).
   #' @param output_name Filename of output file. Filename suffix determines the type (.vcf, .vcf.bgz, .bcf, .bcf.bgz).
-  #' @param output_type "z"/"v" = compressed/uncompressed VCF, "b"/"u" = compressed/uncompressed BCF.
+  #' @param output_type "z"/"v" = compressed/uncompressed VCF, "b"/"u" = compressed/uncompressed BCF. Note that the file extension of output_name will take precedence.
   #' @param regions data.frame of bed-like format (1st column chromosome, 2nd start position (0-indexed), 3rd end, other cols unused)
   #' @param variant_ids Character vector of variant IDs, to subset the VCF/BCF(s) by.
   #' @param sample_ids Character vector of sample IDs, to subset the VCF/BCF(s) by.
+  #' @param query <TODO document me>
   #' @param chr_nm_map data.frame with two columns. Used to convert the VCF files' chromosome/contig names from the names in the first column to the second. E.g. to convert from "chr1" to "1". You can assume this name mapping is applied before the VCF is subset by regions and/or variant_ids.
   #' @param info_fields <TODO> Character vector of INFO fields to keep, e.g. c("AC","AF","AN"). If left NULL, all fields are gotten.
   #' @param format_fields <TODO> Character vector of FORMAT fields to keep, e.g. c("GT","DP"). If left NULL, all fields are gotten.
@@ -37,21 +39,27 @@ bcftoolsPipableCmd <- function(files,
   if(!is.null( sample_ids)) writeLines( sample_ids,  sample_ids_fnm)
   if(!is.null( chr_nm_map)) write.table(chr_nm_map,  chr_nm_map_fnm, sep=' ', row.names=F, col.names=F, quote=F)
   if(!is.null(    regions)) {
-    regions <- regions[order( unlist(regions[[1]]), unlist(regions[[2]]) )] # Sort by chrom,chromStart
+    #regions <- regions[order( unlist(regions[[1]]), unlist(regions[[2]]) )] # Sort by chrom,chromStart TODO: not necessary I don't think
 
     #       Gets   vvvvv   from VCF headers
     # ##contig=<ID=chr12,length=248956422,assembly=gnomAD_GRCh38>
     vcfs_contigs <- unique(unlist(sapply(files, function(f) {
-      system(paste(bcftools_bin,"head",f,"| grep '##contig' | sed -e 's/.*ID=//' -e 's/,.*//'"), intern=T, ignore.stderr=T)
+      system(paste(bcftools_bin,"head",f,"| grep '##contig' | sed -e 's/.*ID=//' -e 's/>.*//' -e 's/,.*//'"), intern=T, ignore.stderr=T)
     })))
 
-    # Use chr_nm_map to change regions contig names to match VCF. Why not change the VCF's names first instead?-see notes to self at the bottom.
+    # Use chr_nm_map to change regions contig names to match VCF's contig naming. Why not change the VCF's names first instead? See notes to self at the bottom.
     if(!is.null(chr_nm_map)) {
       regions[[1]] <- sapply(regions[[1]], function(nm) {
-        if(nm %in% vcfs_contigs)
-          nm
-        else if(nm %in% chr_nm_map[[2]])
-          chr_nm_map[[1]][chr_nm_map[[2]]==nm]
+        # Map regions to preferred naming style. Then reverse-map to whatever is in VCF file.
+        if(nm %in% unique(chr_nm_map[[1]]))
+          nm <- chr_nm_map[[2]][chr_nm_map[[1]] == nm]
+
+        if(!(nm %in% vcfs_contigs))  {# If not already matching VCF, then try reverse-mapping 
+          nm2 <- chr_nm_map[[1]][chr_nm_map[[2]] %in% nm &
+                                 chr_nm_map[[1]] %in% vcfs_contigs]
+          if(length(nm2)==1) return(nm2) # i.e. length not 0
+        }
+        return(nm) # <TODO: better wording> Either nm is matching a contig name in VCF, or if not just return nm. If it doesn't match anything the region will just get dropped.
       })
     }
 
@@ -98,11 +106,16 @@ bcftoolsPipableCmd <- function(files,
   if(!is.null(exclude_annos))
     a(" -x '", paste(collapse=',',exclude_annos), "'")
 
+  #bcftools query
+  if(!is.null(query))
+    a(" -Ou | ",bcftools_bin," query -f '",query,"'")
+
   # Optional output file 
   if(!is.null(output_name))
     a(" -o ",output_name)
 
-  a(" -O",output_type[1])
+  if(!is.null(output_type))
+    a(" -O",output_type[1])
 
   if(!is.null(extra_cmds))
     a(" ",extra_cmds)

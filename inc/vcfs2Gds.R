@@ -26,7 +26,7 @@ vcfs2Gds <- function(files, output_name,
                                      bcftools_bin=bcftools_bin)
   vcf_connection <- pipe(bcftools_cmd, "rt")
 
-  f <- seqVCF2GDS(vcf_connection, output_name, storage.option="ZIP_RA")
+  f <- seqVCF2GDS(vcf_connection, output_name, storage.option="ZIP_RA", ignore.chr.prefix="")
   close(vcf_connection)
   unlink(c(paste0(files,".tbi"), paste0(files,".csi"))) # Index files clutter the working directory when accessing over the internet.
   
