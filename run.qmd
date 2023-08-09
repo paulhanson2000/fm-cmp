@@ -403,46 +403,48 @@ sumstats <- mapply(sumstats, data_config$ancestry, SIMPLIFY=F,
 ```{r}
 # TODO: PAINTOR's script is fast, but would be more elegant to do in R than system calls to Python
 anno_colss <- mapply(sumstats, 1:length(sumstats), SIMPLIFY=F, FUN = function(sumstat,i) {
-  scratch_dir <- misc_config$scratch_dir
-  sumstat$chr <- paste0("chr",sumstat$chr) # TODO:TODO:TODO:
-  fwrite(sumstat[, .(chr,pos)], paste0(scratch_dir,"/sumstat",i), sep=' ')
+  scratch <- misc_config$scratch_dir
+  py_env_dir <- paste0(scratch,"/py_env/")
 
-  writeLines(anno_config$bed_file, paste0(scratch_dir,"/config.anno.tmp"))
+  fwrite(sumstat[, .(chr,pos)], paste0(scratch,"/sumstat",i), sep=' ')
+  writeLines(anno_config$bed_file, paste0(scratch,"/config.anno.tmp"))
 
-  # TODO: put this virtualenv cruft in misc$scratch_dir at least, if you're going to keep using PAINTOR's script 
-  if(!dir.exists("py_env")) system("virtualenv py_env; source py_env/bin/activate; python -m pip install numpy")
-  system(paste0("source py_env/bin/activate; python3 third_party/PAINTOR_V3.0/PAINTOR_Utilities/AnnotateLocus.py -o ",scratch_dir,"/anno_cols.txt -c chr -p pos -i ",scratch_dir,"/config.anno.tmp -l ",scratch_dir,"/sumstat",i))
+  if(!dir.exists(py_env_dir)) {
+    system(paste0("virtualenv ",py_env_dir,"; ",
+                  "source ",py_env_dir,"bin/activate; ",
+                  "python -m pip install numpy"))
+  }
+  system(paste0("source ",py_env_dir,"bin/activate; ",
+                "python3 third_party/PAINTOR_V3.0/PAINTOR_Utilities/AnnotateLocus.py",
+                  " -l ",scratch,"/sumstat",i," -c chr -p pos",
+                  " -i ",scratch,"/config.anno.tmp",
+                  " -o ",scratch,"/anno_cols.txt"))
 
-  anno_cols <- fread(paste0(scratch_dir,"/anno_cols.txt"))
+  anno_cols <- fread(paste0(scratch,"/anno_cols.txt"))
   names(anno_cols) <- anno_config$name
 
   unlink("config.anno.tmp")
-  unlink(paste0(scratch_dir,"/anno_cols.txt"))
-  unlink(paste0(scratch_dir,"/sumstat",i))
+  unlink(paste0(scratch,"/anno_cols.txt"))
+  unlink(paste0(scratch,"/sumstat",i))
   anno_cols 
 })
-lapply(anno_colss,lapply,sum) # Make sure everything isn't just 0
+
+# Rm cols that are all-0 in all ancestries TODO: or all < some threshold
+n_anno_hits <- as.data.frame(lapply(anno_colss,sapply,sum))
+anno_no_hits_in_all_datasets <- rownames(n_anno_hits)[rowSums(n_anno_hits)==0]
+lapply(anno_colss, function(anno_cols) anno_cols[, (anno_no_hits_in_all_datasets) := NULL])
+message("The following annotations were removed because no variants in any dataset were positive for them:\n", paste(collapse='\n', anno_no_hits_in_all_datasets))
+# NOTE: if everything is 0, might be because the contig names in the bed files don't match those of chr_nm_map (which is what sumstats should now be onverted to)
+
 sumstats <- mapply(sumstats, anno_colss, SIMPLIFY=F, FUN=cbind)
 ```
 
-## Add `SEGNUMBER` and `locus` Columns
-```{r}
-lapply(sumstats, function(s) {
-  s[,locus := factor(levels=loci_config$locus)]
-  lapply(1:nrow(loci_config), function(l) {
-    s[ chr == loci_config$chr[l] &
-       pos >= loci_config$pos_min[l] &
-       pos <= loci_config$pos_max[l],
-       `:=`(locus=l, SEGNUMBER=l)       ]
-})})
-#save(sumstats, samples_of_each_ancestry, file="sumstats-filtered-annotated.RData")
-```
-
-### fgwas
+## fgwas
 ```{r}
 # TODO: Move most of this fgwas stuff to a separate function
+invisible(lapply(sumstats, function(sumstat) sumstat[,SEGNUMBER := as.integer(locus)]))
 
-if(!dir.exists("in/fgwas")) dir.create("in/fgwas")
+if(!dir.exists("in/fgwas")) dir.create("in/fgwas", recursive=T)
 if(!dir.exists("out/fgwas")) dir.create("out/fgwas")
 
 # Functions here assume sumstat_file is formatted properly for fgwas -fine. I.e.:
