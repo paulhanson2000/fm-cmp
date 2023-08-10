@@ -456,17 +456,25 @@ if(!dir.exists("out/fgwas")) dir.create("out/fgwas")
 
 # Iteratively adds the anno which most increases the model's likelihood, until no more improvement. 
 fgwasGetBestLikelihoodAnnos <- function(sumstat_file, annos_to_try, annos_acc, best_llk) {
-  llks <- sapply(annos_to_try, function(anno_to_try) { # TODO: embarassingly parallel lapply
-    fgwas_out_prefix <- paste0("out/fgwas/",anno_to_try,"-",basename(sumstat_file))
+  
+  # It may seem like it would be easier to just parallelize a for loop in R rather than use GNU parallel.
+  # However, every call to system() launches a new shell (source: https://ro-che.info/articles/2020-12-11-r-system2).
+  # We run fgwas a LOT of times, so this overhead is significant here. Hence why a single system() call w/ GNU parallel is better.
+  
+  runs <- data.table(
+    anno_to_try = annos_to_try,
+    model_to_run = sapply(annos_to_try, function(anno_to_try) paste(collapse='+', c(annos_acc, anno_to_try))),
+    output_name  = paste0("out/fgwas/",annos_to_try,"-",basename(sumstat_file)))
+  fwrite(runs, "in/fgwas/runs.tsv", sep='\t', col.names=F)
 
-    model <- paste(collapse='+',c(annos_acc, anno_to_try))
-    system(paste0("third_party/fgwas/src/fgwas -fine",
-                  " -i ", sumstat_file,
-                  " -w ", model, 
-                  " -o ", fgwas_out_prefix))
+  system(ignore.stdout=T, ignore.stderr=T, paste(
+    "parallel -a in/fgwas/runs.tsv --colsep '\t'",
+    "third_party/fgwas/src/fgwas -fine",
+      "-i", sumstat_file,
+      "-w {2}",  # model, e.g. anno1+anno3+anno7
+      "-o {3}")) # output name prefix 
 
-    llk <- read.table(paste0(fgwas_out_prefix,".llk"))[1,2]
-  })
+  llks <- setNames(sapply(paste0(runs$output_name,".llk"), function(f) read.table(f)[1,2]), runs$anno_to_try)
  
   if(max(llks) > best_llk) {
     new_best_llk <- max(llks)
@@ -558,6 +566,7 @@ mapply(sumstats, names(sumstats), SIMPLIFY=F,FUN=function(s,s_nm) { # TODO: emba
   #                 " -o out/fgwas/",s_nm,"-",anno ))
   #})
 
+  message("Running fgwas on ",s_nm,"....")
   annos   <- fgwasGetBestLikelihoodAnnos(input_filename, anno_config$name, c(), 0)
   #l       <- fgwasGetBestXValidationPenalty(input_filename, annos)
   #return(    fgwasGetBestXValidatedAnnos(input_filename, annos, l$best_penalty, l$best_xv_llk))
