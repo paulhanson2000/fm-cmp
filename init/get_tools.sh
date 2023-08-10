@@ -14,6 +14,7 @@ set -e
 cd third_party/fgwas/
 if ! [ -f src/fgwas ]; then
   ./configure
+  sed -i -e 's/iter <5000/iter<40/' -e 's/iter > 4999/iter>39/' src/SNPs.cpp # NOTE: cursed editing of fgwas's source to increase speed by reducing the number of iterations before it concludes a model doesn't converge.
   make
 fi
 cd -

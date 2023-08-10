@@ -430,10 +430,11 @@ anno_colss <- mapply(sumstats, 1:length(sumstats), SIMPLIFY=F, FUN = function(su
 })
 
 # Rm cols that are all-0 in all ancestries TODO: or all < some threshold
-n_anno_hits <- as.data.frame(lapply(anno_colss,sapply,sum))
-anno_no_hits_in_all_datasets <- rownames(n_anno_hits)[rowSums(n_anno_hits)==0]
-lapply(anno_colss, function(anno_cols) anno_cols[, (anno_no_hits_in_all_datasets) := NULL])
-message("The following annotations were removed because no variants in any dataset were positive for them:\n", paste(collapse='\n', anno_no_hits_in_all_datasets))
+# TODO: Actually probably not necessary, will get removed later by fgwas etc. anyway right?
+#n_anno_hits <- as.data.frame(lapply(anno_colss,sapply,sum))
+#anno_no_hits_in_all_datasets <- rownames(n_anno_hits)[rowSums(n_anno_hits)==0]
+#lapply(anno_colss, function(anno_cols) anno_cols[, (anno_no_hits_in_all_datasets) := NULL])
+#message("The following annotations were removed because no variants in any dataset were positive for them:\n", paste(collapse='\n', anno_no_hits_in_all_datasets))
 # NOTE: if everything is 0, might be because the contig names in the bed files don't match those of chr_nm_map (which is what sumstats should now be onverted to)
 
 sumstats <- mapply(sumstats, anno_colss, SIMPLIFY=F, FUN=cbind)
@@ -455,26 +456,25 @@ if(!dir.exists("out/fgwas")) dir.create("out/fgwas")
 
 # Iteratively adds the anno which most increases the model's likelihood, until no more improvement. 
 fgwasGetBestLikelihoodAnnos <- function(sumstat_file, annos_to_try, annos_acc, best_llk) {
+  llks <- sapply(annos_to_try, function(anno_to_try) { # TODO: embarassingly parallel lapply
+    fgwas_out_prefix <- paste0("out/fgwas/",anno_to_try,"-",basename(sumstat_file))
 
-  llks <- sapply(annos_to_try, function(anno) { # TODO: embarassingly parallel lapply
-    fgwas_out_prefix <- paste0("out/fgwas/",anno_to_try,"-",sumstat_file)
-
-    model <- paste(collapse='+',c(annos_acc, anno_to_try));    if(length(annos_acc)==0) model <- anno_to_try
-    system(paste0("../third_party/fgwas/src/fgwas -fine",
+    model <- paste(collapse='+',c(annos_acc, anno_to_try))
+    system(paste0("third_party/fgwas/src/fgwas -fine",
                   " -i ", sumstat_file,
                   " -w ", model, 
                   " -o ", fgwas_out_prefix))
 
-    llk <- fread(paste0(fgwas_out_prefix,".llk"))[1,2]
+    llk <- read.table(paste0(fgwas_out_prefix,".llk"))[1,2]
   })
  
   if(max(llks) > best_llk) {
     new_best_llk <- max(llks)
     anno_to_add  <- names(llks)[which.max(llks)]
-    new_anno_acc <- c(anno_acc, anno_to_add)
+    new_anno_acc <- c(annos_acc, anno_to_add)
 
-    return(fgwasGetBestLikelihoodAnnos(sumstat_filename, annos_to_try[!anno_to_add], new_anno_acc, new_best_llk) )
-  } else return(anno_acc)
+    return(fgwasGetBestLikelihoodAnnos(sumstat_file, annos_to_try[annos_to_try!=anno_to_add], new_anno_acc, new_best_llk) )
+  } else return(annos_acc)
 }
 # The above function is recursive.
 # tailr::loop_transform makes it slightly faster and makes sure it doesn't overflow the stack, because R doesn't implement tail recursion.
@@ -488,10 +488,10 @@ fgwasGetBestXValidationPenalty <- function(sumstat_file, annos) {
   penalties <- seq(0, 1, 0.05)
 
   xv_llks <- lapply(penalties, function(penalty) { # TODO: embarassingly parallel lapply
-    fgwas_out_prefix <- paste0("out/fgwas/",as.character(penalty),"-",sumstat_file)
+    fgwas_out_prefix <- paste0("out/fgwas/",as.character(penalty),"-",basename(sumstat_file))
 
     model <- paste(collapse='+', annos)
-    system(paste0( "../third_party/fgwas/src/fgwas -fine -xv -print",
+    system(paste0( "third_party/fgwas/src/fgwas -fine -xv -print",
                    " -i ", sumstat_file,
                    " -w ", model, 
                    " -p ", penalty,
@@ -512,10 +512,10 @@ fgwasGetBestXValidatedAnnos <- function(sumstat_file, xv_penalty, annos, best_xv
   # TODO: Here I assume that dropping an anno in the middle of the model *might* cause an anno earlier in the model to now also become worth it to drop the llk if dropped, even if that wasn't the case before dropping the middle anno.
     # This might be overly cautious, in which case, this could be optimized by only needing to traverse the model once, dropping whatever increases the llk without having to look back.
   xv_llks <- sapply(annos, function(anno_to_drop) { # TODO: embarassingly parallel lapply
-    fgwas_out_prefix <- paste0("out/fgwas/drop_",anno_to_drop,"-",sumstat_file)
+    fgwas_out_prefix <- paste0("out/fgwas/drop_",anno_to_drop,"-",basename(sumstat_file))
 
     model <- paste(collapse='+', annos[!anno_to_drop])
-    system(paste0( "../third_party/fgwas/src/fgwas -fine -xv -print",
+    system(paste0( "third_party/fgwas/src/fgwas -fine -xv -print",
                    " -i ", sumstat_file,
                    " -w ", model,
                    " -p ", penalty,
@@ -540,12 +540,12 @@ fgwasGetBestXValidatedAnnos <- tailr::loop_transform(fgwasGetBestXValidatedAnnos
 
 # Takes the sumstats, formats them in a way fgwas likes, then applies the above functions to get the annotations of the best-likelihood model.
 best_annos <- 
-lapply(sumstats, function(s) { # TODO: embarassingly parallel lapply
-  s <- s[, .SD, .SDcols=c( "rsid","chr","pos","z","se","SEGNUMBER",anno_config$name)]
+mapply(sumstats, names(sumstats), SIMPLIFY=F,FUN=function(s,s_nm) { # TODO: embarassingly parallel mapply
+  s <- s[, .SD, .SDcols=c("rs_id","chr","pos","z","se","SEGNUMBER",anno_config$name)]
   setnames(s,           c("SNPID","CHR","POS","Z","SE","SEGNUMBER",anno_config$name))
                                    # fgwas requires specific header names.
   s <- s[order(SEGNUMBER,CHR,POS)] # fgwas requires ordering by SEGNUMBER (if -fine option), and chr and pos.
-  s[,chr := paste0("chr",CHR)]     # fgwas uses hg19 "chr#" syntax, not just the number.
+  #s[,chr := paste0("chr",CHR)]     # fgwas uses hg19 "chr#" syntax, not just the number.
   s[,`:=`(F=0, N=0)]               # fgwas errors if missing F or N col, even though overridden by SE.
 
   input_filename <- paste0("in/fgwas/",s_nm,"-fgwas.gz")
@@ -559,8 +559,8 @@ lapply(sumstats, function(s) { # TODO: embarassingly parallel lapply
   #})
 
   annos   <- fgwasGetBestLikelihoodAnnos(input_filename, anno_config$name, c(), 0)
-  l       <- fgwasGetBestXValidationPenalty(input_filename, annos)
-  return(    fgwasGetBestXValidatedAnnos(input_filename, annos, l$best_penalty, l$best_xv_llk))
+  #l       <- fgwasGetBestXValidationPenalty(input_filename, annos)
+  #return(    fgwasGetBestXValidatedAnnos(input_filename, annos, l$best_penalty, l$best_xv_llk))
 })
 ```
 
