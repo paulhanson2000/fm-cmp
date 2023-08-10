@@ -492,21 +492,24 @@ fgwasGetBestLikelihoodAnnos <- tailr::loop_transform(fgwasGetBestLikelihoodAnnos
 # Tests which penalty value has the best cross-validation likelihood, given the model fgwasGetBestLikelihoodModel()
 fgwasGetBestXValidationPenalty <- function(sumstat_file, annos) {
   # TODO: Does f(model,penalty) have only one minimum? If so, could optimize by making more intelligent steps than just 0.05 intervals.
+    # NOTE: can withhold from parallelizing this function until it's clear whether making more intelligent steps is possible
   # TODO: Go finer than steps of 0.05?
   penalties <- seq(0, 1, 0.05)
+  model <- paste(collapse='+', annos)
 
-  xv_llks <- lapply(penalties, function(penalty) { # TODO: embarassingly parallel lapply
+  xv_llks <- sapply(penalties, function(penalty) {
     fgwas_out_prefix <- paste0("out/fgwas/",as.character(penalty),"-",basename(sumstat_file))
 
-    model <- paste(collapse='+', annos)
-    system(paste0( "third_party/fgwas/src/fgwas -fine -xv -print",
-                   " -i ", sumstat_file,
-                   " -w ", model, 
-                   " -p ", penalty,
-                   " -o ", fgwas_out_prefix))
+    system(ignore.stdout=T, ignore.stderr=T, paste(
+      "third_party/fgwas/src/fgwas -fine -xv -print",
+        "-i", sumstat_file,
+        "-w", model,
+        "-p", penalty,
+        "-o", fgwas_out_prefix))
 
-    a <- fread(paste0(fgwas_out_prefix,".ridgeparams"))
-    xv_llk <- a[,nrow(a)] # Kinda wack, but fgwas puts the x-validation likelihood result in the last line of the .ridgeparams output files.
+    # fgwas puts the x-validation likelihood result in the last line of the .ridgeparams output files.
+    tmp <- readLines(paste0(fgwas_out_prefix,".ridgeparams"))
+    xv_llk <- as.numeric(tail(strsplit(tmp[length(tmp)], ' ')[[1]], 1))
   })
 
   return(list(
@@ -523,11 +526,11 @@ fgwasGetBestXValidatedAnnos <- function(sumstat_file, xv_penalty, annos, best_xv
     fgwas_out_prefix <- paste0("out/fgwas/drop_",anno_to_drop,"-",basename(sumstat_file))
 
     model <- paste(collapse='+', annos[!anno_to_drop])
-    system(paste0( "third_party/fgwas/src/fgwas -fine -xv -print",
-                   " -i ", sumstat_file,
-                   " -w ", model,
-                   " -p ", penalty,
-                   " -o ", fgwas_out_prefix))
+    system(paste("third_party/fgwas/src/fgwas -fine -xv -print",
+                   "-i", sumstat_file,
+                   "-w", model,
+                   "-p", penalty,
+                   "-o", fgwas_out_prefix))
 
     a <- fread(paste0(fgwas_out_prefix,".ridgeparams"))
     xv_llk <- a[,nrow(a)]
@@ -548,27 +551,20 @@ fgwasGetBestXValidatedAnnos <- tailr::loop_transform(fgwasGetBestXValidatedAnnos
 
 # Takes the sumstats, formats them in a way fgwas likes, then applies the above functions to get the annotations of the best-likelihood model.
 best_annos <- 
-mapply(sumstats, names(sumstats), SIMPLIFY=F,FUN=function(s,s_nm) { # TODO: embarassingly parallel mapply
+mapply(sumstats, names(sumstats), SIMPLIFY=F, FUN=function(s,s_nm) { # TODO: embarassingly parallel mapply
   s <- s[, .SD, .SDcols=c("rs_id","chr","pos","z","se","SEGNUMBER",anno_config$name)]
   setnames(s,           c("SNPID","CHR","POS","Z","SE","SEGNUMBER",anno_config$name))
                                    # fgwas requires specific header names.
   s <- s[order(SEGNUMBER,CHR,POS)] # fgwas requires ordering by SEGNUMBER (if -fine option), and chr and pos.
-  #s[,chr := paste0("chr",CHR)]     # fgwas uses hg19 "chr#" syntax, not just the number.
+  #s[,chr := paste0("chr",CHR)]     # fgwas uses UCSC "chr#" syntax, not just the number.
   s[,`:=`(F=0, N=0)]               # fgwas errors if missing F or N col, even though overridden by SE.
 
   input_filename <- paste0("in/fgwas/",s_nm,"-fgwas.gz")
   fwrite(s, input_filename, sep=' ', compress="gzip")
 
-  # Old, to test just one anno at a time, use me instead of the below code. # TODO: rm me eventually
-  #lapply(anno_config$name, function(anno) {
-  #  system(paste0( "../third_party/fgwas/src/fgwas -i ", input_filename, " -fine",
-  #                 " -w ", anno,
-  #                 " -o out/fgwas/",s_nm,"-",anno ))
-  #})
-
   message("Running fgwas on ",s_nm,"....")
-  annos   <- fgwasGetBestLikelihoodAnnos(input_filename, anno_config$name, c(), 0)
-  #l       <- fgwasGetBestXValidationPenalty(input_filename, annos)
+  annos   <- fgwasGetBestLikelihoodAnnos(input_filename, anno_config$name, c(), 0) # TODO: TODO: TODO:
+  l       <- fgwasGetBestXValidationPenalty(input_filename, annos)
   #return(    fgwasGetBestXValidatedAnnos(input_filename, annos, l$best_penalty, l$best_xv_llk))
 })
 ```
