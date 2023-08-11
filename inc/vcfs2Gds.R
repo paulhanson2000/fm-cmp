@@ -23,8 +23,10 @@ vcfs2Gds <- function(files, output_name,
   bcftools_cmd <- bcftoolsPipableCmd(files, output_type="v",
                                      regions=regions, variant_ids=variant_ids, sample_ids=sample_ids,
                                      chr_nm_map=chr_nm_map, exclude_annos=exclude_annos, extra_cmds=extra_cmds,
-                                     bcftools_bin=bcftools_bin)
+                                     scratch_dir=scratch_dir, bcftools_bin=bcftools_bin)
   vcf_connection <- pipe(bcftools_cmd, "rt")
+
+  # TODO: add a "safe" option to download and convert one VCF at a time, seqMerge()ing them. This would prevent having to start completely over again if the download corrupts in one place.
 
   f <- seqVCF2GDS(vcf_connection, output_name, storage.option="ZIP_RA", ignore.chr.prefix="")
   close(vcf_connection)

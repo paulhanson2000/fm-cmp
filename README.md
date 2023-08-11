@@ -1,7 +1,6 @@
 # How to run TL;DR
 Linux only.
 ```{bash}
-# Download this repository, and go inside.
 git clone git@github.com:paulhanson2000/fm-cmp.git
 cd fm-cmp
 
