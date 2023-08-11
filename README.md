@@ -52,6 +52,6 @@ If you are not on a cluster, you will need to get the following dependencies you
 + [LAPACK](https://www.netlib.org/lapack/#_software) (for MsCAVIAR)
 
 # TODO
-Document how to get a GitHub token to be allowed to download more stuff, may be required for the R packages hosted on GitHub
-Document in a miscellaneous section or s/t: Tip: LD data is big. If you are on a Linux compute cluster, you recommended to make the in/ld directory a symbolic link to your cluster's scratch space.
+Document how to get a GitHub token to be allowed to download more stuff, may be required for the R packages hosted on GitHub\
+Document in a miscellaneous section or s/t: Tip: LD data is big. If you are on a Linux compute cluster, you recommended to make the in/ld directory a symbolic link to your cluster's scratch space.\
 Add more guidance about how to use your own data, more than "just edit the configs". Mention all files needed and have example code blocks of what each file should look like.
