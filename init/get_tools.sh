@@ -13,8 +13,9 @@ set -e
 # fgwas
 cd third_party/fgwas/
 if ! [ -f src/fgwas ]; then
+  autoreconf -f -i # Because https://stackoverflow.com/a/33286344
   ./configure
-  sed -i -e 's/iter <5000/iter<40/' -e 's/iter > 4999/iter>39/' src/SNPs.cpp # NOTE: cursed editing of fgwas's source to increase speed by reducing the number of iterations before it concludes a model doesn't converge.
+  sed -i -e 's/iter <5000/iter<1000/' -e 's/iter > 4999/iter>999/' src/SNPs.cpp # NOTE: cursed editing of fgwas's source to increase speed by reducing the number of iterations before it concludes a model doesn't converge.
   make
 fi
 cd -
