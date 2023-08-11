@@ -213,7 +213,7 @@ sumstats <- lapply(1:nrow(data_config), function(r) {
 
   # Infer some columns from the others if possible. For axample, z-score can be calculated from β and SE.
   if(data_config[r, is.na(z_col) & !is.na(b_col) & !is.na(se_col)]) sumstat[, z := b/se]
-  # TODO: possible to reverse-engineer N from p/z/se/af if n_col not given?
+  # TODO: reverse-engineer N from p/z/se/af if n_col not given?
 
   # TODO: meh, maybe just compare w/ $chr $pos etc. directly instead of creating these IDs?
     # No, ID col is good b/c passing ids of this format is the clearest interface for functions like vcfs2Gds and ldCalc
@@ -303,20 +303,17 @@ if(!any(grepl("^rs", ref_panel_ids))) { # TODO: Actually can skip this if ref pa
            roll=T,
            mult="first"
          ]
-  identical(tmp$chr, ref_var_id_info$chr)
-  identical(tmp$pos, ref_var_id_info$pos)
-  identical(tmp$i.ref, ref_var_id_info$ref)
-  identical(tmp$i.alt, ref_var_id_info$alt)
-  # TODO: Seems OK, but just quddruple-check that this is actaully correct b/c I'm not 100% confident w/ join operations yet.
-    # sum(is.na(tmp$rs_id) | duplicated(tmp$rs_id)) / nrow(tmp) is ~5% which seems a bit high.
-    # Then again this could just be b/c multiallelics are decomposed in the ref panel but not in dbSNP?
+  stopifnot(identical(tmp$chr,   ref_var_id_info$chr)) # sanity check (TODO: rm once sane)
+  stopifnot(identical(tmp$pos,   ref_var_id_info$pos))
+  stopifnot(identical(tmp$i.ref, ref_var_id_info$ref))
+  stopifnot(identical(tmp$i.alt, ref_var_id_info$alt))
 
   seqAddValue(ref, "annotation/id", tmp$rs_id, replace=T)
+  # NOTE: these rsIDs added to the reference panel may include duplicates and/or NAs.
+  # Dupllicate rsIDs are indicative of variants in the reference panel which have been merged in newer versions of dbSNP.
+  # Missing    rsIDs are indicative of...                                           withdrawn in newer versions of dbSNP.
 
-  # Filter variants w/ duplicate rsID (indicative of variants in the reference panel which have been merged in newer versions of dbSNP)
-  # Filter variants w/  missing  rsID (                                                             withdrawn                         )
   # TODO: use rsID synonyms and stuff to try to keep as many variants as possible?
-  seqSetFilter(ref, variant.sel = !duplicated(tmp$rs_id) & !is.na(tmp$rs_id))
 
   rm(tmp, ref_var_id_info, dbsnp_var_id_info)
 }
@@ -356,22 +353,17 @@ sumstats <- mapply(sumstats, data_config$ancestry, SIMPLIFY=F,
   FUN = function(s, anc) {
     ancestry_maf_mac_miss <- ancestries_maf_mac_miss[[anc]]
 
-    # TODO: also PASS the FILTER?
-    # seqGetData(ref, "annotation/filter")=="PASS"
-    
-
-    my_filter <- rep(T, sum(seqGetFilter(ref)$variant.sel))
+    seqResetFilter(ref)
+    variants2keep <- rep(T, seqSummary(ref,verbose=F)$num.variant)
+    variants2keep <- !duplicated(seqGetData(ref,"annotation/id")) &
+                          !is.na(seqGetData(ref,"annotation/id"))
+    if(!anyNA(filt(ref)))                           variants2keep <- variants2keep & filt(ref) == "PASS"
+    if(!is.null(misc_config$maf_threshold))         variants2keep <- variants2keep & ancestry_maf_mac_miss$af   > misc_config$maf_threshold
+    if(!is.null(misc_config$mac_threshold))         variants2keep <- variants2keep & ancestry_maf_mac_miss$ac   > misc_config$mac_threshold
+    if(!is.null(misc_config$missingness_threshold)) variants2keep <- variants2keep & ancestry_maf_mac_miss$miss > misc_config$missingness_threshold
     # TODO: multiallelic filter using seqNumAllele()?
-    if(!anyNA(filt(ref)))
-      my_filter <- my_filter & filt(ref) == "PASS" # TODO: is bcftools annotate -x 'FORMAT,INFO' removing FILTER?
-    if(!is.null(misc_config$maf_threshold))
-      my_filter <- my_filter & ancestry_maf_mac_miss$af > misc_config$maf_threshold
-    if(!is.null(misc_config$mac_threshold))
-      my_filter <- my_filter & ancestry_maf_mac_miss$ac > misc_config$mac_threshold
-    if(!is.null(misc_config$missingness_threshold))
-      my_filter <- my_filter & ancestry_maf_mac_miss$miss > misc_config$missingness_threshold
 
-    seqSetFilter(ref, action = "push+intersect", variant.sel = my_filter)
+    seqSetFilter(ref, action = "push+intersect", variant.sel = variants2keep)
 
     s <- s[rs_id %in% seqGetData(ref,"annotation/id")]
     seqFilterPop(ref)
@@ -412,20 +404,11 @@ anno_colss <- mapply(sumstats, 1:length(sumstats), SIMPLIFY=F, FUN = function(su
   anno_cols 
 })
 
-# Rm cols that are all-0 in all ancestries TODO: or all < some threshold
-# TODO: Actually probably not necessary, will get removed later by fgwas etc. anyway right?
-#n_anno_hits <- as.data.frame(lapply(anno_colss,sapply,sum))
-#anno_no_hits_in_all_datasets <- rownames(n_anno_hits)[rowSums(n_anno_hits)==0]
-#lapply(anno_colss, function(anno_cols) anno_cols[, (anno_no_hits_in_all_datasets) := NULL])
-#message("The following annotations were removed because no variants in any dataset were positive for them:\n", paste(collapse='\n', anno_no_hits_in_all_datasets))
-# NOTE: if everything is 0, might be because the contig names in the bed files don't match those of chr_nm_map (which is what sumstats should now be onverted to)
-
 sumstats <- mapply(sumstats, anno_colss, SIMPLIFY=F, FUN=cbind)
 ```
 
 ## fgwas
 ```{r}
-# TODO: Move most of this fgwas stuff to a separate function
 invisible(lapply(sumstats, function(sumstat) sumstat[,SEGNUMBER := as.integer(locus)]))
 
 if(!dir.exists("in/fgwas")) dir.create("in/fgwas", recursive=T)
@@ -463,7 +446,9 @@ mapply(sumstats, names(sumstats), SIMPLIFY=F, FUN=function(s,s_nm) { # TODO: emb
 ## Subset
 Split the summary stats into sets of subsets, one per locus.
 ```{r}
-sumstats <- lapply(sumstats, '[', order(rsid)) # TODO: prefer chr:pos:allele IDs
+# TODO: update w/ tapply. B/c now that liftover'd, one locus can have multiple regions.
+  # Don't have to do now for the DIAMANTE data since all loci are made of one region in b37.
+  # This change is only required to support datasets of multiple reference genomes, or multi-region user-specified loci.
 subset_sumstatss <- lapply(1:nrow(loci_config), function(r) {
                     mapply(sumstats, data_config$ref_genome, SIMPLIFY=F, FUN = function(s, ref_genome) {
   s[ chr == loci_configs[[ref_genome]][r,chr]     &
