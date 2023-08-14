@@ -1,10 +1,10 @@
-# How to run TL;DR
+# How to run
 Linux only.
 ```{bash}
 git clone git@github.com:paulhanson2000/fm-cmp.git
 cd fm-cmp
 
-# If you're on a compute cluster using LMod, run this every time. Tested on Compute Canada & BU SCC.
+# If you're on a compute cluster using LMod, run this each time. Tested on Compute Canada & BU SCC.
 # Otherwise, on your personal computer make sure you have the dependencies.
 source init/get_lmod_modules.sh
 
@@ -18,7 +18,7 @@ quarto render
 
 # TODO: Redbean stuff to look at results
 ```
-To use this pipeline on your own data, simply edit the `config/` files!
+To use this pipeline on your own data, see `config/README.md`.
 
 # Goals:
 + Reproduce fine mapping results from [2022 DIAMANTE paper](https://doi.org/10.1038/s41588-022-01058-3) ([results to reproduce](https://kp4cd.org/index.php/node/869))
@@ -53,5 +53,4 @@ If you are not on a cluster, you will need to get the following dependencies you
 
 # TODO
 Document how to get a GitHub token to be allowed to download more stuff, may be required for the R packages hosted on GitHub\
-Document in a miscellaneous section or s/t: Tip: LD data is big. If you are on a Linux compute cluster, you recommended to make the in/ld directory a symbolic link to your cluster's scratch space.\
-Add more guidance about how to use your own data, more than "just edit the configs". Mention all files needed and have example code blocks of what each file should look like.
+Mention all files needed and have example code blocks of what each file should look like.
