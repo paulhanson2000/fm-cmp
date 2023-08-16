@@ -1,6 +1,6 @@
 # Config Options
-## Data Config
-Tell the pipeline about your GWAS summary statistics files
+## `data.config`
+Tell the pipeline about your GWAS summary statistics files.
 + `filepath`
 + `n`: sample size.
 + `ancestry`: ancestry of the individuals that the summary stats were derived from. e.g. EAS, EUR, SAS.
@@ -18,20 +18,21 @@ Tell the pipeline about your GWAS summary statistics files
   + `p_col`: p-value
   + `n_col`: per-variant sample size
 
-## Loci Config
+## `loci.config`
 Configure the regions to be fine-mapped.
 + `locus`: locus name (TODO: '+' in locus names will cause fgwas bug)
 + `chr`, `pos_min`, `pos_max`: defines the locus's region
 + `ref_genome`: reference genome the locus's positions are based on (UCSC naming scheme, e.g. "hg19", "hg38")
 Note: the same locus name can be used for multiple regions to fine map those regions together.
 
-## Annotation Config
+## `anno.config`
 (Optional) Specify functional annotations in the form of [`.bed`-format files](http://www.genome.ucsc.edu/FAQ/FAQformat.html#format1).
 + `name`
 + `ref_genome`: reference genome the `.bed` file's positions are based on (UCSC naming scheme, e.g. "hg19", "hg38)
 + `bed_file`: path to the `.bed` file
 
-## Miscellaneous Config
+## `misc.config`
+Specify which reference panel to use, which fine-mapping methods to run, MAF/MAC thresholds, and more.
 + `scratch_dir`: directory to store intermediate outputs that are worth keeping so they don't have to be recomputed, such as LD.
 + `maf_threshold`: minimum minor allele frequency allowed in summary stats and reference panel. NULL to set no threshold.
 + `mac_threshold`: minumum minor allele count allowed in summary stats and reference panel. NULL to set no theshold.
@@ -54,12 +55,12 @@ Note: the same locus name can be used for multiple regions to fine map those reg
 + Functional annotation incorporation methods
   + `use_paintor_anno_functionality`: (TODO) TRUE or FALSE, whether to use PAINTOR's built-in support for annotations or not. If TRUE, will override other annotation methods.
 
-## LD Config (TODO)
+## `ld.config` (TODO)
 If you specified `misc_config$ref_panel="my_ld"`, use `config.ld` to specify your pre-computed LD files:
 + `filepath`: name of a space-delimited LD matrix file.
 + `locus`: name of the `config.loci` locus the LD matrix is for.
 + `ancestry`: ancestry group the LD was calculated from.
 + `colnames_file`: useful if your LD file is only numbers and corresponding variant IDs are stored in another file.
 
-## Chromosome Name Map: `ucsc_chr_names_map.txt`
+## `ucsc_chr_names_map.txt`
 + Specify which chromosome names (`from`) are synonymous with those under the UCSC naming scheme (`to`).

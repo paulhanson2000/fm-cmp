@@ -123,9 +123,9 @@ bcftoolsPipableCmd <- function(files,
   # Notes to self:
   # Why change regions contig names to match the VCF and not vice versa? I.e. why not "bcftools annotate --rename-chrs" before giving "-R"?
     # B/c "bcftools concat" must go first since only it can accept multiple files, and "-R" must be given to "concat" and can't be delayed
-    # b/c after the "concat" part the file must be re-indexed, and "-R" requires an indexed file to work.
+    # b/c after "concat" the file must be re-indexed, and "-R" requires an indexed file to work.
     # The file can't be indexed without writing an intermediate vcf/bcf file and running a separate "bcftools index" command.
-    # Since this function's goal is to return just a single, pipable bcftools_cmd, I can't do this.
+    # Since this function's goal is to return just a single, pipable bcftools_cmd for seamless use, I can't do this.
   # Why -Ou before every pipe?
     # Speed. See bcftools docs for -O option and also https://www.biostars.org/p/336800/#336873.
 

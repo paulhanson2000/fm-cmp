@@ -3,10 +3,10 @@ liftOver <- function(to_lift, from_build, to_build, out_file=NULL, liftover_bin=
   #'
   #' Simple wrapper for UCSC's liftOver, to convert genome coordinates between reference genomes. Required chain files are automatically downloaded. BED file specification: http://www.genome.ucsc.edu/FAQ/FAQformat.html#format1 
   #'
-  #' @param to_lift A BED format file, or a bed-like data.frame. Note that UCSC-style chromosome naming must be used (e.g. "chr1", not just "1"), or liftOver won't work.
+  #' @param to_lift A BED format file, or a BED-like data.frame. NOTE: UCSC-style chromosome naming must be used (e.g. "chr1", not just "1"), or liftOver won't work.
   #' @param from_build A string, e.g. "hg19"
   #' @param to_build A string, e.g. "hg38"
-  #' @param out_file Desired output filename. Results is also returned as an R data.frame even if this is not given.
+  #' @param out_file Desired output filename. Results are also returned as an R data.frame whether this option is given or not. 
   #' @param liftover_bin Path to the program liftOver. Can be downloaded from http://hgdownload.soe.ucsc.edu/admin/exe/linux.x86_64/liftOver
   #' @return A BED-like data frame with lifted genome coordinates.
   #' @section Command-line use: since this function can accept files, you could run it from the command line like so: R -q -e source("liftOver.R"); liftOver("my_file.bed", "hg19", "hg38", liftover_bin="path/to/liftOver"). At that point you should probably just use liftOver by itself though.

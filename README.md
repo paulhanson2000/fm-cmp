@@ -17,6 +17,9 @@ Rscript init/get_r_pkgs.R
 quarto render
 
 # TODO: Redbean stuff to look at results
+curl https://redbean.dev/redbean-original-2.2.com > redbean.com
+chmod -R 777 redbean.com compare_outputs*
+./redbean.com -D. -w quarto_output/compare_results.html
 ```
 To use this pipeline on your own data, see `config/README.md`.
 
@@ -37,8 +40,8 @@ To use this pipeline on your own data, see `config/README.md`.
   - [SparsePro](https://github.com/zhwm/SparsePro) ([paper](https://doi.org/10.1101/2021.10.04.463133))
   - [SuSiEx](https://github.com/getian107/SuSiEx) ([SuSiEx paper](https://doi.org/10.1101/2023.01.07.23284293), [original SuSie paper](https://doi.org/10.1111/rssb.12388) and [susieR package](https://github.com/stephenslab/susieR))
     - [SuSiE-inf and FINEMAP-inf](https://github.com/FinucaneLab/fine-mapping-inf) ([paper](https://doi.org/10.1101/2022.10.21.513123))
-+ Incorporating functional annotations if possible, if not already built-in to the method (e.g. [fgwas](https://github.com/joepickrell/fgwas), [PolyFun](https://github.com/omerwe/polyfun))
-+ Try multiple (multi-ancestry) reference panels such as 1000 Genomes, TOPMed.
++ Incorporate functional annotations if possible (using e.g. [fgwas](https://github.com/joepickrell/fgwas), [PolyFun](https://github.com/omerwe/polyfun))
++ Try multiple (multi-ancestry) reference panels such as 1000 Genomes, HGDP, TOPMed.
 + Try other traits than T2D (e.g. HbA1C, fasting insulin, MAGIC fasting glucose...)
 
 # Dependencies
@@ -52,5 +55,5 @@ If you are not on a cluster, you will need to get the following dependencies you
 + [LAPACK](https://www.netlib.org/lapack/#_software) (for MsCAVIAR)
 
 # TODO
-Document how to get a GitHub token to be allowed to download more stuff, may be required for the R packages hosted on GitHub\
-Mention all files needed and have example code blocks of what each file should look like.
+Show how to get a GitHub token to be allowed to download more stuff, may be required for the R packages hosted on GitHub\
+Give visual examples of what each filetype should look like
