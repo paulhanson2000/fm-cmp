@@ -16,10 +16,11 @@ Rscript init/get_r_pkgs.R
 # Run pipeline (need Quarto, get it from quarto.org)
 quarto render
 
-# TODO: Redbean stuff to look at results
+# View the results as an html file on your web browser.
+# (Readbean is a convenient http server that can run on any OS: https://redbean.dev)
 curl https://redbean.dev/redbean-original-2.2.com > redbean.com
 chmod -R 777 redbean.com compare_outputs*
-./redbean.com -D. -w quarto_output/compare_results.html
+./redbean.com -D . -w quarto_output/compare_outputs.html -l 127.0.0.1
 ```
 To use this pipeline on your own data, see `config/README.md`.
 
