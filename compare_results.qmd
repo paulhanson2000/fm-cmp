@@ -20,8 +20,8 @@ TODO: comparing against Mahajan results hardcoded for this particular project, m
 Also loading `tmp` is a slowdown... smarter way of translating chrposIDs -> rsids?
 ```{r}
 #| cache: true 
-loci_configs <- fread("config.loci")
-result_files <- paste0("../data/DIAMANTE2022/fine_mapping/", list.files("../data/DIAMANTE2022/fine_mapping/", pattern="finemap."))
+loci_configs <- fread("config/loci.config")
+result_files <- paste0("data/DIAMANTE2022/fine_mapping/", list.files("data/DIAMANTE2022/fine_mapping/", pattern="finemap."))
 result_files <- sapply(loci_configs$locus, simplify=F, function(l) grep(l, result_files, value=T)) # NOTE: one locus can have multiple credset files.
 
 # Read all credset files per locus. List of list of datatables.
@@ -35,9 +35,9 @@ mahajan_results <- lapply(mahajan_results, do.call, what=rbind) # Merge so just 
 mahajan_results <- lapply(mahajan_results, '[', i=order(-pip), j=.SD[1], by=chrposID) # IDs may be duplicated if there were multiple credible set files. Take only max PIP per ID.
 
 # Translate chrposID -> risd
-sumstat_ids <- lapply(c("../data/DIAMANTE2022/sumstat/DIAMANTE-EAS.sumstat.txt",
-                        "../data/DIAMANTE2022/sumstat/DIAMANTE-EUR.sumstat.txt",
-                        "../data/DIAMANTE2022/sumstat/DIAMANTE-SAS.sumstat.txt"),
+sumstat_ids <- lapply(c("data/DIAMANTE2022/sumstat/DIAMANTE-EAS.sumstat.txt",
+                        "data/DIAMANTE2022/sumstat/DIAMANTE-EUR.sumstat.txt",
+                        "data/DIAMANTE2022/sumstat/DIAMANTE-SAS.sumstat.txt"),
                       fread, select=c("rsID","chrposID")                        )
 sumstat_ids <- do.call(rbind, sumstat_ids)
 sumstat_ids <- unique(sumstat_ids, by="rsID")
@@ -50,7 +50,7 @@ rm(all_ids_in_credsets)
 mahajan_results <- lapply(mahajan_results, function(mr) {
   mr <- merge(x=mr, y=sumstat_ids, by="chrposID")
   mr <- mr[, .(rsID,pip)] # Can toss chrposID now
-  setnames(mr, old=c("rsID"), new="rsid")
+  setnames(mr, old=c("rsID"), new="rs_id")
 })
 ```
 
@@ -59,53 +59,53 @@ mahajan_results <- lapply(mahajan_results, function(mr) {
 #| cache: false
 result_files <- paste0("out/paintor/", list.files("out/paintor/", pattern=".results"))
 result_files <- result_files[!grepl("LogFile", result_files)]
-paintor_results <- lapply(result_files, fread, select=c("rsid", "Posterior_Prob"),
-                                             col.names=c("rsid",       "pip"     ))
+paintor_results <- lapply(result_files, fread, select=c("rs_id", "Posterior_Prob"),
+                                             col.names=c("rs_id",       "pip"     ))
 names(paintor_results) <- sub("out/paintor/(.*).results", "\\1", result_files)
 ```
 ## SuSiEx
 ```{r}
 #| cache: false
-result_files <- paste0("out/susiex/", list.files("out/susiex/", pattern=".snp")) 
-susiex_results <- lapply(result_files, function(f) {
-  header <- fread(f, nrow=1, header=F)
-  pip_colnames <- unname(grep("PIP", header, value=T))
-  if(length(pip_colnames)==0) return( fread(f, select="SNP", col.names="rsid")[,pip := 0] )
-
-  susiex_result <- fread(f, select=c("SNP", pip_colnames))
-  susiex_result <- susiex_result[, .SDcols = pip_colnames, pip := max(.SD), by=1:nrow(susiex_result)]
-  susiex_result <- susiex_result[, (pip_colnames) := NULL]
-  setnames(susiex_result, old="SNP", new="rsid")
-})
-names(susiex_results) <- sub("out/susiex/(.*).snp", "\\1", result_files)
+#result_files <- paste0("out/susiex/", list.files("out/susiex/", pattern=".snp")) 
+#susiex_results <- lapply(result_files, function(f) {
+#  header <- fread(f, nrow=1, header=F)
+#  pip_colnames <- unname(grep("PIP", header, value=T))
+#  if(length(pip_colnames)==0) return( fread(f, select="SNP", col.names="rsid")[,pip := 0] )
+#
+#  susiex_result <- fread(f, select=c("SNP", pip_colnames))
+#  susiex_result <- susiex_result[, .SDcols = pip_colnames, pip := max(.SD), by=1:nrow(susiex_result)]
+#  susiex_result <- susiex_result[, (pip_colnames) := NULL]
+#  setnames(susiex_result, old="SNP", new="rsid")
+#})
+#names(susiex_results) <- sub("out/susiex/(.*).snp", "\\1", result_files)
 ```
 
 # Prep Results for JS
 ```{r}
 resultss <- list(Mahajan = mahajan_results,
-                 PAINTOR = paintor_results,
-                 SuSiEx  =  susiex_results)
+                 PAINTOR = paintor_results)
+                 #SuSiEx  =  susiex_results)
 
 resultss <- sapply(loci_configs$locus, simplify=F, function(l) {
-  locus_rsids_union <- Reduce(union, lapply(resultss, function(results) results[[l]]$rsid))
+  locus_rs_ids_union <- Reduce(union, lapply(resultss, function(results) results[[l]]$rs_id))
   lapply(resultss, function(results) {
-    method_missing_rsids <- locus_rsids_union[locus_rsids_union %ni% results[[l]]$rsid]
-    if(length(method_missing_rsids)==0)
+    method_missing_rs_ids <- locus_rs_ids_union[locus_rs_ids_union %ni% results[[l]]$rs_id]
+    if(length(method_missing_rs_ids)==0)
       tmp <- results[[l]]
     else
-      tmp <- rbind(results[[l]], data.table(rsid = method_missing_rsids, pip = 0))
-    setorder(tmp, rsid)
+      tmp <- rbind(results[[l]], data.table(rs_id = method_missing_rs_ids, pip = 0))
+    setorder(tmp, rs_id)
   })
 }) # Returns resultss[locus][method]
 resultss <- purrr::transpose(resultss) # Turn back to resultss[method][locus]
 
 mahajan_pips <- lapply(resultss$Mahajan, '[', j=pip)
 paintor_pips <- lapply(resultss$PAINTOR, '[', j=pip)
-susiex_pips  <- lapply(resultss$SuSiEx,  '[', j=pip)
+#susiex_pips  <- lapply(resultss$SuSiEx,  '[', j=pip)
 
 ojs_define(mahajan_pips = mahajan_pips,
-           paintor_pips = paintor_pips,
-           susiex_pips = susiex_pips)
+           paintor_pips = paintor_pips)
+#           susiex_pips = susiex_pips)
 ```
 
 [Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam...]{.aside}
@@ -128,7 +128,7 @@ plot(rnorm(100),runif(100))
 //| code-fold: true
 viewof methodx = Inputs.radio(["Mahajan2022", "PAINTOR", "SuSiEx"], {label: "Method X", value: "Mahajan2022"})
 viewof methody = Inputs.radio(["Mahajan2022", "PAINTOR", "SuSiEx"], {label: "Method Y", value: "SuSiEx"})
-viewof locus = Inputs.select(Object.keys(susiex_pips), {label:"Locus"})
+viewof locus = Inputs.select(Object.keys(paintor_pips), {label:"Locus"})
 viewof xslider = Inputs.range([0,1], {label: "X slider", value: 1})
 max_x = Math.pow(xslider,10)
 viewof yslider = Inputs.range([0,1], {label: "Y slider", value: 1})
@@ -139,7 +139,7 @@ viewof consistent_axes = Inputs.toggle({label: "Consistent Axes"})
 method_results = ({
   Mahajan2022: mahajan_pips,
   PAINTOR: paintor_pips,
-  SuSiEx: susiex_pips
+  //SuSiEx: susiex_pips
 })
 
 plot_data = [

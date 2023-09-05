@@ -15,8 +15,14 @@ cd third_party/fgwas/
 if ! [ -f src/fgwas ]; then
   autoreconf -f -i # Because https://stackoverflow.com/a/33286344
   ./configure
-  sed -i -e 's/iter <5000/iter<1000/' -e 's/iter > 4999/iter>999/' src/SNPs.cpp # NOTE: cursed editing of fgwas's source to increase speed by reducing the number of iterations before it concludes a model doesn't converge.
-  make
+
+  # NOTE: cursed editing of fgwas's source speed up by reducing the iterations before concluding a model doesn't converge.
+  # Don't need as many iterations to for the first pass of models with only one annotation, so build two separate versions of fgwas.
+  sed -i -e 's/iter <5000/iter <1000/' -e 's/iter > 4999/iter>999/' src/SNPs.cpp 
+  make; mv src/fgwas  src/fgwas-1000_iter
+  make clean
+  sed -i -e 's/iter <1000/iter <100/' -e 's/iter > 4999/iter>99/' src/SNPs.cpp
+  make; mv src/fgwas  src/fgwas-100_iter
 fi
 cd -
 

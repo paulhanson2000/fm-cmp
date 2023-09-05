@@ -12,9 +12,11 @@ cd       data/DIAMANTE2022/sumstat/
 if ! [ -f DIAMANTE-SAS.sumstat.txt ]; then 
   curl -O https://personal.broadinstitute.org/ryank/DIAMANTE.sumstats.zip # Alternative: http://diagram-consortium.org
   unzip DIAMANTE.sumstats.zip
-  parallel -t -j3 gzip -d ::: DIAMANTE-EAS.sumstat.txt.gz \
+  parallel -t -j4 gzip -d ::: DIAMANTE-EAS.sumstat.txt.gz \
                               DIAMANTE-EUR.sumstat.txt.gz \
-                              DIAMANTE-SAS.sumstat.txt.gz
+                              DIAMANTE-SAS.sumstat.txt.gz \
+                              DIAMANTE-TA.sumstat.txt.gz
+  rm DIAMANTE.sumstats.zip
 fi
 cd -
 
