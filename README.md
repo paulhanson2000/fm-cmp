@@ -1,7 +1,7 @@
 # How to run
 Linux only.
 ```{bash}
-git clone git@github.com:paulhanson2000/fm-cmp.git
+git clone https://github.com/paulhanson2000/fm-cmp.git
 cd fm-cmp
 
 # If you're on a compute cluster using LMod, run this each time. Tested on Compute Canada & BU SCC.
