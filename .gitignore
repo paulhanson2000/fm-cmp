@@ -9,6 +9,7 @@ data
 
 scratch/
 
+quarto_output/
 /.quarto/
 *.html
 *.rmarkdown
