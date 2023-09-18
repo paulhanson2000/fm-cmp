@@ -25,14 +25,14 @@ misc_config <- sapply(yaml::yaml.load_file("config/misc.config"),identity)
 data_config <- fread("config/data.config")
 loci_config <- fread("config/loci-all.config")
 anno_config <- fread("config/anno-plus_roadmap_and_tfs.config")
-  ld_config <- fread("config/ld.config"  )
+  ld_config <- fread("config/ld.config")
 chr_nm_map <- fread("config/ucsc_chr_names_map.txt")
 ```
 TODO: printout "stamp" of configs s.t. in the rendered doc, it is clear what was run.
 
 ## Hands-free hardcoded reference panels
 ```{r}
-if(misc_config$ref_panel == "1kG") {
+if(misc_config$ref_panel == "1kg") {
   misc_config$ref_panel_ref_genome <- "hg19"
   misc_config$ref_panel <- paste0("http://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/ALL.chr",1:22,".phase3_shapeit2_mvncall_integrated_v5b.20130502.genotypes.vcf.gz")
   misc_config$ref_panel <- c(misc_config$ref_panel, "http://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/ALL.chrX.phase3_shapeit2_mvncall_integrated_v1c.20130502.genotypes.vcf.gz")
@@ -42,7 +42,7 @@ if(misc_config$ref_panel == "1kG") {
   misc_config$sample_id_field <- "sample"
   misc_config$sample_ancestry_field <- "super_pop"
 } else
-if(misc_config$ref_panel == "1kG_30x") {
+if(misc_config$ref_panel == "1kg_30x") {
   misc_config$ref_panel_ref_genome <- "hg38"
   misc_config$ref_panel <- paste0("http://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000G_2504_high_coverage/working/20220422_3202_phased_SNV_INDEL_SV/1kGP_high_coverage_Illumina.chr",1:22,".filtered.SNV_INDEL_SV_phased_panel.vcf.gz")
   misc_config$ref_panel <- c(misc_config$ref_panel, "http://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000G_2504_high_coverage/working/20220422_3202_phased_SNV_INDEL_SV/1kGP_high_coverage_Illumina.chrX.filtered.SNV_INDEL_SV_phased_panel.v2.vcf.gz")
@@ -50,7 +50,7 @@ if(misc_config$ref_panel == "1kG_30x") {
   misc_config$sample_id_field <- "SampleID"
   misc_config$sample_ancestry_field <- "Superpopulation"
 } else
-if(misc_config$ref_panel == "gnomAD_1kG+HGDP") {
+if(misc_config$ref_panel == "gnomad_1kg+hgdp") {
   misc_config$ref_panel_ref_genome <- "hg38"
   misc_config$ref_panel <- paste0("https://gnomad-public-us-east-1.s3.amazonaws.com/release/3.1.2/vcf/genomes/gnomad.genomes.v3.1.2.hgdp_tgp.chr",c(1:22,"X","Y"),".vcf.bgz") # Only the Amazon links work, otherwise corrupts halfway through vcfs2Gds().
 
@@ -187,6 +187,12 @@ names(anno_configs) <- unique(data_config$ref_genome)
 ## GWAS summary stats
 ```{r}
 #| output: false
+# TODO: Temporary hard-coded DIAMANTE meta-analyzed sumstats for fgwas.
+data_config <- rbind(data_config, data_config[1,]) 
+data_config[4, `:=`(filepath="data/DIAMANTE2022/sumstat/DIAMANTE-TA.sumstat.txt",
+                    n=NA, ancestry=NA, eaf_col=NA,
+                    b_col=10, se_col=11, p_col=12)]
+
 sumstats <- lapply(1:nrow(data_config), function(r) {
   loci <- loci_configs[[ data_config[r,ref_genome] ]] # Loci with coords lifted to the current data file's ref genome
 
@@ -346,31 +352,38 @@ ancestries_maf_mac_miss <- lapply(samples_of_each_ancestry, function(samples_of_
 })
 seqResetFilter(ref, variant=F)
 
-invisible(sapply(data_config$ancestry, function(anc) if(anc %ni% names(ancestries_maf_mac_miss)) { print(paste("ERROR: Ancestry",anc,"mentioned in config.data is not an ancestry in the reference panel:", paste(collapse=", ", names(ancestries_MAFs)), "\nPlease remove this dataset from config.data, or if this was just a typo, change the ancestry name to match one of those in the reference panel.")); stop() })) # TODO: this belongs earlier, when loading in the data. But a nice sanity check to have for now.
+invisible(sapply(data_config$ancestry, function(anc) if(anc %ni% names(ancestries_maf_mac_miss)) { print(paste("ERROR: Ancestry",anc,"mentioned in config.data is not an ancestry in the reference panel:", paste(collapse=", ", names(ancestries_maf_mac_miss)), "\nPlease remove this dataset from config.data, or if this was just a typo, change the ancestry name to match one of those in the reference panel.")); stop() })) # TODO: this belongs earlier, when loading in the data. But a nice sanity check to have for now.
 
-sumstats <- mapply(sumstats, data_config$ancestry, SIMPLIFY=F,
-  FUN = function(s, anc) {
-    ancestry_maf_mac_miss <- ancestries_maf_mac_miss[[anc]]
+sumstats <- mapply(sumstats, data_config$ancestry, SIMPLIFY=F, FUN = function(s, anc) {
+  ancestry_maf_mac_miss <- ancestries_maf_mac_miss[[anc]]
 
-    seqResetFilter(ref)
-    variants2keep <- rep(T, seqSummary(ref,verbose=F)$num.variant)
-    variants2keep <- !duplicated(seqGetData(ref,"annotation/id")) & # TODO: just keeping the first duplicate. Could keep more variants by finding rsID synonyms?
-                          !is.na(seqGetData(ref,"annotation/id"))
-    if(!anyNA(filt(ref)))                           variants2keep <- variants2keep & filt(ref) == "PASS"
+  seqResetFilter(ref)
+  variants2keep <- rep(T, seqSummary(ref,verbose=F)$num.variant)
+  variants2keep <- !duplicated(seqGetData(ref,"annotation/id")) & # TODO: just keeping the first duplicate. Could keep more variants by finding rsID synonyms?
+                        !is.na(seqGetData(ref,"annotation/id"))
+  if(!anyNA(filt(ref)))                           variants2keep <- variants2keep & filt(ref) == "PASS"
+  if(!is.null(ancestry_maf_mac_miss)) { # TODO: bad, silently fails if typo in ancestry name
     if(!is.null(misc_config$maf_threshold))         variants2keep <- variants2keep & ancestry_maf_mac_miss$af   > misc_config$maf_threshold
     if(!is.null(misc_config$mac_threshold))         variants2keep <- variants2keep & ancestry_maf_mac_miss$ac   > misc_config$mac_threshold
-
+  
                                                     variants2keep <- variants2keep & ancestry_maf_mac_miss$miss < 1
     if(!is.null(misc_config$missingness_threshold)) variants2keep <- variants2keep & ancestry_maf_mac_miss$miss < misc_config$missingness_threshold
-    # TODO: multiallelic filter using seqNumAllele()?
+  }
+  # TODO: multiallelic filter using seqNumAllele()?
 
-    seqSetFilter(ref, action = "push+intersect", variant.sel = variants2keep)
+  seqSetFilter(ref, action = "push+intersect", variant.sel = variants2keep)
 
-    s <- s[rs_id %in% seqGetData(ref,"annotation/id")]
-    seqFilterPop(ref)
-    s
+  s <- s[rs_id %in% seqGetData(ref,"annotation/id")]
+  seqFilterPop(ref)
+  s
 })
-#save(sumstats, samples_of_each_ancestry, file="sumstats-filtered.RData")
+
+sumstats_TA_cpy <- sumstats[[4]]
+ancestres_rsids_union <- Reduce(union, lapply(sumstats[1:3], '[', j=rs_id))
+sumstats[[4]] <- sumstats[[4]][rs_id %in% ancestries_rsids_union]
+rm(ancestries_rsids_union)
+
+save(sumstats, file="sumstats-filtered.RData")
 ```
 
 
@@ -379,11 +392,15 @@ sumstats <- mapply(sumstats, data_config$ancestry, SIMPLIFY=F,
 ```{r}
 # TODO: add a misc_config option to only do this if annotations are requested
 # TODO: PAINTOR's script is fast, but would be more elegant to do in R than system calls to Python
-anno_colss <- mapply(sumstats, 1:length(sumstats), SIMPLIFY=F, FUN = function(sumstat,i) {
+
+# TODO: transition from doing separately for each ancestry to once on the trans-ancestry file
+#anno_colss <- mapply(sumstats, 1:length(sumstats), SIMPLIFY=F, FUN = function(sumstat,i) {
+anno_cols <- {
+  sumstat <- sumstats[[4]] # TODO: the trans-ancestry meta-analyzed sumstats, please remove hard coding
   scratch <- misc_config$scratch_dir
   py_env_dir <- paste0(scratch,"/py_env/")
 
-  fwrite(sumstat[, .(chr,pos)], paste0(scratch,"/sumstat",i), sep=' ')
+  fwrite(sumstat[, .(chr,pos)], paste0(scratch,"/sumstat"), sep=' ')
   writeLines(anno_config$bed_file, paste0(scratch,"/config.anno.tmp"))
 
   if(!dir.exists(py_env_dir)) {
@@ -393,7 +410,7 @@ anno_colss <- mapply(sumstats, 1:length(sumstats), SIMPLIFY=F, FUN = function(su
   }
   system(paste0("source ",py_env_dir,"bin/activate; ",
                 "python3 third_party/PAINTOR_V3.0/PAINTOR_Utilities/AnnotateLocus.py",
-                  " -l ",scratch,"/sumstat",i," -c chr -p pos",
+                  " -l ",scratch,"/sumstat -c chr -p pos",
                   " -i ",scratch,"/config.anno.tmp",
                   " -o ",scratch,"/anno_cols.txt"))
 
@@ -402,56 +419,52 @@ anno_colss <- mapply(sumstats, 1:length(sumstats), SIMPLIFY=F, FUN = function(su
 
   unlink("config.anno.tmp")
   unlink(paste0(scratch,"/anno_cols.txt"))
-  unlink(paste0(scratch,"/sumstat",i))
+  unlink(paste0(scratch,"/sumstat"))
   anno_cols 
-})
+}
 
-sumstats <- mapply(sumstats, anno_colss, SIMPLIFY=F, FUN=cbind)
-rm(anno_colss)
+#sumstats <- mapply(sumstats, anno_colss, SIMPLIFY=F, FUN=cbind)
+sumstat_TA_cpy <- sumstats[[4]]
+sumstats[[4]] <- cbind(sumstats[[4]], anno_cols)
+rm(anno_cols)
 ```
 
 ## fgwas
 ```{r}
 if("fgwas" %in% misc_config$anno_method) {
-
-  invisible(lapply(sumstats, function(sumstat) sumstat[,SEGNUMBER := as.integer(locus)]))
-  
   if(!dir.exists("in/fgwas")) dir.create("in/fgwas", recursive=T)
   if(!dir.exists("out/fgwas")) dir.create("out/fgwas")
   
   # Takes the sumstats, formats them in a way fgwas likes, then gets the annotations of the best-likelihood model.
-  fgwas_results <-
-  mapply(sumstats, names(sumstats), SIMPLIFY=F, FUN=function(s,s_nm) { # TODO: embarassingly parallel mapply
-    s <- s[, .SD, .SDcols=c("rs_id","chr","pos","z","se","SEGNUMBER",anno_config$name)]
-    setnames(s,           c("SNPID","CHR","POS","Z","SE","SEGNUMBER",anno_config$name))
-                                     # fgwas requires specific header names.
-    s <- s[order(SEGNUMBER,CHR,POS)] # fgwas requires ordering by SEGNUMBER (if -fine option), and chr and pos.
-    #s[,chr := paste0("chr",CHR)]     # fgwas uses UCSC "chr#" syntax, not just the number.
-    s[,`:=`(F=0, N=0)]               # fgwas errors if missing F or N col, even though overridden by SE.
+  s <- sumstats[[4]]
+  s[,SEGNUMBER := as.integer(locus)]
+  s <- s[, .SD, .SDcols=c("rs_id","chr","pos","z","se","SEGNUMBER",anno_config$name)]
+  setnames(s,           c("SNPID","CHR","POS","Z","SE","SEGNUMBER",anno_config$name))
+                                   # fgwas requires specific header names.
+  s <- s[order(SEGNUMBER,CHR,POS)] # fgwas requires ordering by SEGNUMBER (if -fine option), and chr and pos.
+  #s[,chr := paste0("chr",CHR)]     # fgwas uses UCSC "chr#" syntax, not just the number.
+  s[,`:=`(F=0, N=0)]               # fgwas errors if missing F or N col, even though overridden by SE.
   
-    input_filename <- paste0("in/fgwas/",s_nm,"-fgwas.gz")
-    fwrite(s, input_filename, sep=' ', compress="gzip")
+  input_filename <- paste0("in/fgwas/fgwas_input_sumstats.gz")
+  fwrite(s, input_filename, sep=' ', compress="gzip")
   
-    message("Running fgwas on ",s_nm,"....")
-    source("inc/fgwasFxns.R")
-    # TODO: somewhat_signif_annos <- fgwasFirstPassorsomething(input_filename, anno_config$name, c(), 0, silent=T)
-    # TODO: change below command to only use somewhat_signif_annos
-    # TODO: Add aux/wrapper function so that c() and 0 don't have to be passed by the user?
-    # TODO: Add fgwas_bin argument
-    annos     <- fgwasGetBestLikelihoodAnnos(input_filename, anno_config$name, c(), 0, silent=T)
-    l         <- fgwasGetBestXValidationPenalty(input_filename, annos, silent=T)
-    best_annos <-fgwasGetBestXValidatedAnnos(input_filename, l$best_penalty, annos, l$best_xv_llk, silent=T)
+  source("inc/fgwasFxns.R")
+
+  annos      <- fgwasPruneInsignifAnnos(input_filename, anno_config$name, fgwas_bin="third_party/fgwas/src/fgwas-100_iter", silent=T)
+  if(length(annos)==0) { message("No annotations were significant.") }
+  else {
+    annos      <- fgwasGetBestLikelihoodAnnos(input_filename, annos, fgwas_bin="third_party/fgwas/src/fgwas-1000_iter", silent=T)
+    l          <- fgwasGetBestXValidationPenalty(input_filename, annos, fgwas_bin="third_party/fgwas/src/fgwas-1000_iter", silent=T)
+    best_annos <- fgwasGetBestXValidatedAnnos(input_filename, annos, l$best_penalty, l$best_xv_llk, fgwas_bin="third_party/fgwas/src/fgwas-1000_iter", silent=T)
     
     best_model <- paste(collapse='+', best_annos)
-    return(best_model) # TODO: TODO: TODO: temporary, just to get the annotations to give to paintor
-    system(paste("third_party/fgwas/src/fgwas -fine -print",
+    system(paste("third_party/fgwas/src/fgwas-1000_iter -fine -print",
       "-i", input_filename,
       "-w", best_model,
-      "-o", paste0("out/fgwas/final-",s_nm)))
-  
-    fread(paste0("out/fgwas/final-",s_nm,".bfs.gz"))
-  })
-
+      "-o", "out/fgwas/results"))
+    
+    fgwas_results <- fread(paste0("out/fgwas/results.bfs.gz"))
+  }
 }
 ```
 
@@ -461,8 +474,13 @@ Split the summary stats into sets of subsets, one per locus.
 # TODO: update w/ tapply. B/c now that liftover'd, one locus can have multiple regions.
   # Don't have to do now for the DIAMANTE data since all loci are made of one region in b37.
   # This change is only required to support datasets of multiple reference genomes, or multi-region user-specified loci.
+
+sumstats4 <- sumstats[[4]] # TODO: temporary until meta-analysis implemented...
+sumstats[[4]] <- NULL
+
 subset_sumstatss <- lapply(1:nrow(loci_config), function(r) {
-                    mapply(sumstats, data_config$ref_genome, SIMPLIFY=F, FUN = function(s, ref_genome) {
+                    #mapply(sumstats, data_config$ref_genome, SIMPLIFY=F, FUN = function(s, ref_genome) {
+                    mapply(sumstats, data_config$ref_genome[1:3], SIMPLIFY=F, FUN = function(s, ref_genome) { # TODO: hardcoded [1:3]
   s <- s[order(rs_id)] # important becuase PAINTOR requires all variants to be in the same order for every group
   s <- s[ chr == loci_configs[[ref_genome]][r,chr]     &
           pos >= loci_configs[[ref_genome]][r,pos_min] &
@@ -534,7 +552,8 @@ ldCalc <- function(gds_file, rs_ids, sample_ids=NULL, ref_alleles=NULL, outfile_
 
 ldss <-
   sapply(       loci_config$locus,     simplify=F, function(l) {
-  sapply(unique(data_config$ancestry), simplify=F, function(anc) {
+  #sapply(unique(data_config$ancestry), simplify=F, function(anc) {
+  sapply(unique(data_config$ancestry[1:3]), simplify=F, function(anc) { # TODO: [1:3] hardcoded
     samples_of_an_ancestry <- samples_of_each_ancestry[[anc]]
     sumstats_of_an_ancestry <- subset_sumstatss[[l]][which(data_config$ancestry == anc)]
     common_rs_ids_in_sumstats_of_an_ancestry <- Reduce(union, lapply(sumstats_of_an_ancestry, '[', j=rs_id))
