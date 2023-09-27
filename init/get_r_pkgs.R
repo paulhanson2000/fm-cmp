@@ -2,6 +2,8 @@ install.packages(c("BiocManager", "remotes", "quarto", "data.table", "R.utils", 
 
 BiocManager::install(c("SeqArray", "SNPRelate"), update=F, ask=F)
 
+remotes::install_github("paulhanson2000/refpanelutil")
+
 remotes::install_github("mailund/tailr", "USCbiostats/hJAM")
 remotes::install_bitbucket("Wenan/caviarbf", subdir="caviarbf-r-package/caviarbf/")
 remotes::install_version("susieR", version = "0.11.92", repos = "http://cran.us.r-project.org") # susieR version >0.12 breaking change removal of susie_suff_stat(), breaks PolyFun. So use older version.

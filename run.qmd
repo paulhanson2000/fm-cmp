@@ -14,6 +14,7 @@ TODO: print out a bunch of "before and after" tables to make it clearer what the
 library(data.table)
 library(SeqArray)
 library(SNPRelate)
+library(refpanelutil)
 ```
 ```{r}
 "%ni%" <- Negate("%in%")
@@ -23,8 +24,8 @@ library(SNPRelate)
 ```{r}
 misc_config <- sapply(yaml::yaml.load_file("config/misc.config"),identity)
 data_config <- fread("config/data.config")
-loci_config <- fread("config/loci-all.config")
-anno_config <- fread("config/anno-plus_roadmap_and_tfs.config")
+loci_config <- fread("config/loci.config")
+anno_config <- fread("config/anno.config")
   ld_config <- fread("config/ld.config")
 chr_nm_map <- fread("config/ucsc_chr_names_map.txt")
 ```
@@ -129,7 +130,6 @@ loci_config$chr <- factor(loci_config$chr, levels=unique(chr_nm_map$to))
 ### `liftOver`
 ```{r}
 if(!dir.exists("out/liftover")) dir.create("out/liftover", recursive=T)
-source("inc/liftOver.R")
 
 loci_configs <-
 lapply(union(data_config$ref_genome, misc_config$ref_panel_ref_genome), function(dg) {
@@ -255,7 +255,6 @@ if(any(misc_config$ref_panel != "my_ld")) { # TODO: replace this and future such
       seqClose(misc_config$ref_panel); rm(tmp)
 
     } else { # Take given VCF(s) and convert to GDS
-      source("inc/vcfs2Gds.R")
       vcfs2Gds(files = misc_config$ref_panel, 
                output_name = ref_gds_file,
                regions = regions_bed_format,
@@ -285,7 +284,6 @@ if(!any(grepl("^rs", ref_panel_ids))) { # TODO: Actually can skip this if ref pa
     download.file(url = paste0("https://ftp.ncbi.nih.gov/snp/latest_release/VCF/",dbsnp_vcf,".tbi")) # TODO: put in better place than just working dir
   }
 
-  source("inc/bcftoolsPipableCmd.R")
   bcftools_cmd <- bcftoolsPipableCmd(
     files = dbsnp_vcf,
     regions = data.table(seqGetData(ref,"chromosome"), seqGetData(ref,"position")-1, seqGetData(ref,"position")),
@@ -378,12 +376,11 @@ sumstats <- mapply(sumstats, data_config$ancestry, SIMPLIFY=F, FUN = function(s,
   s
 })
 
+# TODO: tmp
 sumstats_TA_cpy <- sumstats[[4]]
 ancestres_rsids_union <- Reduce(union, lapply(sumstats[1:3], '[', j=rs_id))
 sumstats[[4]] <- sumstats[[4]][rs_id %in% ancestries_rsids_union]
 rm(ancestries_rsids_union)
-
-save(sumstats, file="sumstats-filtered.RData")
 ```
 
 
@@ -511,47 +508,11 @@ Calculate LD per ancestry per locus.
 ```{r}
 if(!dir.exists(paste0(misc_config$scratch_dir,"/ld"))) dir.create(paste0(misc_config$scratch_dir,"/ld"))
 
-# Signed Pearson r.
-# Returned LD matrix's rows/cols are sorted to match the order of the given rs_ids.
-# Filters on the GDS file ~are~ taken into account. The GDS file will be returned with the same filters as before.
-ldCalc <- function(gds_file, rs_ids, sample_ids=NULL, ref_alleles=NULL, outfile_name=NULL, n_threads=parallel::detectCores()) {
-  if(is.null(ref_alleles)) warning("calc_ld() warning: specifying your data's ref_alleles is highly recommended! If the reference alleles (i.e. non-effect alleles) in your data =/= those in the reference panel, the LD will be incorrect.")
-  seqFilterPush(gds_file) # Save user's prexisting filter on the file if they have one
-
-  seqSetFilterAnnotID(gds_file, rs_ids)
-  if(!is.null(sample_ids)) seqSetFilter(gds_file, sample.id = sample_ids, action="intersect")
-
-  tmp_filename <- "/tmp/snpgds_format_file.gds"
-  seqGDS2SNP(gds_file, tmp_filename, compress.geno="", compress.annotation="")
-  tmp <- snpgdsOpen(tmp_filename, readonly=F)
-  #print(paste(identical(read.gdsn(index.gdsn(tmp,"snp.rs.id")), seqGetData(gds_file,"annotation/id")))) # TRUE
-
-  # Sort user-given ref_alleles to match the order of the GDS file before allele switching!
-  # Why not sort the GDS file to match user input instead? B/c raw data files should not be edited.
-  ref_alleles <- ref_alleles[match(seqGetData(gds_file,"annotation/id"), rs_ids)]
-  snpgdsAlleleSwitch(tmp, toupper(ref_alleles))
-  ld <- snpgdsLDMat(tmp, slide=0, method="corr", num.thread=n_threads)$LD
-
-  snpgdsClose(tmp) # Don't need SNP GDS format file anymore
-  unlink(tmp_filename)
-
-  # Sort LD matrix to match the order of the user-given rs_ids.
-  rs_ids_order <- match(rs_ids, seqGetData(gds_file,"annotation/id"))
-  ld <- ld[rs_ids_order, rs_ids_order]
-  colnames(ld) <- rs_ids
-  ld <- ld[!apply(ld,1,anyNA),!apply(ld,2,anyNA)] # TODO: Just removing them, but what is the source of these few remaining NaNs?
-
-  if(!is.null(outfile_name)) {
-    if(!dir.exists(dirname(outfile_name))) dir.create(dirname(outfile_name), recursive=T)
-    fwrite(ld, outfile_name, sep=' ', compress="gzip")
-  }
-
-  seqFilterPop(gds_file) # Set filter to however it was before
-  ld
-}
+# TODO: more elegant place to put this?
+seqSetFilter(ref, variant.sel= seqGetData(ref,"annotation/id") %ni% c(NA,"") & !duplicated(seqGetData(ref,"annotation/id")))
 
 ldss <-
-  sapply(       loci_config$locus,     simplify=F, function(l) {
+  sapply(       loci_config$locus[1],     simplify=F, function(l) {
   #sapply(unique(data_config$ancestry), simplify=F, function(anc) {
   sapply(unique(data_config$ancestry[1:3]), simplify=F, function(anc) { # TODO: [1:3] hardcoded
     samples_of_an_ancestry <- samples_of_each_ancestry[[anc]]
@@ -565,11 +526,17 @@ ldss <-
     #print(paste(identical(a_sumstat_of_an_ancestry$rs_id, common_rs_ids_in_sumstats_of_an_ancestry)))
     ref_alleles <- a_sumstat_of_an_ancestry$a0
 
-    ldCalc(ref, rs_ids = common_rs_ids_in_sumstats_of_an_ancestry,
-            sample_ids = samples_of_an_ancestry,
-           ref_alleles = ref_alleles,
-           outfile_name = paste0(misc_config$scratch_dir,"/ld/",l,"-",anc,".ld.gz"),
-             n_threads = 6L) 
+    ld <- ldCalc(ref, 
+                 sample_ids = samples_of_an_ancestry,
+                 variant_ids = common_rs_ids_in_sumstats_of_an_ancestry,
+                 ref_alleles = ref_alleles,
+                 n_threads = 6L)
+
+    outfile_name <- paste0(misc_config$scratch_dir,"ld_refpanelutil/",l,"-",anc,".ld.gz")
+    fwrite(ld, outfile_name, sep=' ', compress="gzip")
+    ld
+
+    # TODO: add a bunch of LD-writing variations for each of the different methods
 })})
 
 # Some variants might have been removed from the LD matrices due to having NaNs. Remove these from the sumstats too
@@ -579,8 +546,6 @@ subset_sumstatss <-
   mapply(basename(data_config$filepath), data_config$ancestry, SIMPLIFY=F, FUN = function(f,a) {
   subset_sumstatss[[l]][[f]][ rs_id %in% colnames(ldss[[l]][[a]]) ]
 })})
-
-#save(ld_rs_id_orders, file="in/ld/ld_rs_id_orders.RData") # TODO: Save as separate files, with one col of just rsIDs? This way, LD could be used by non-R programs more easily.
 ```
 
 
