@@ -22,7 +22,8 @@ library(refpanelutil)
 
 # Load Configs
 ```{r}
-misc_config <- sapply(yaml::yaml.load_file("config/misc.config"),identity)
+fix_yaml <- function(a) {if(is.list(a)) sapply(a, function(a2) lapply(a2, flatten_yaml)) else a}
+misc_config <- fix_yaml(yaml::read_yaml("config/misc.config"))
 data_config <- fread("config/data.config")
 loci_config <- fread("config/loci.config")
 anno_config <- fread("config/anno.config")
@@ -510,9 +511,11 @@ if(!dir.exists(paste0(misc_config$scratch_dir,"/ld"))) dir.create(paste0(misc_co
 # TODO: more elegant place to put this?
 seqSetFilter(ref, variant.sel= seqGetData(ref,"annotation/id") %ni% c(NA,"") & !duplicated(seqGetData(ref,"annotation/id")))
 
-ldss <-
-  sapply(       loci_config$locus[1],     simplify=F, function(l) {
-  sapply(unique(data_config$ancestry), simplify=F, function(anc) {
+sapply(       loci_config$locus,     simplify=F, function(l) {
+sapply(unique(data_config$ancestry), simplify=F, function(anc) {
+    outfile_name <- paste0(misc_config$scratch_dir,"ld_refpanelutil/",l,"-",anc,".ld.gz")
+    if(file.exists(outfile_name)) return(fread(outfile_name))
+
     samples_of_an_ancestry <- samples_of_each_ancestry[[anc]]
     sumstats_of_an_ancestry <- subset_sumstatss[[l]][which(data_config$ancestry == anc)]
     common_rs_ids_in_sumstats_of_an_ancestry <- Reduce(union, lapply(sumstats_of_an_ancestry, '[', j=rs_id))
@@ -530,13 +533,10 @@ ldss <-
                  ref_alleles = ref_alleles,
                  n_threads = 6L)
 
-    outfile_name <- paste0(misc_config$scratch_dir,"ld_refpanelutil/",l,"-",anc,".ld.gz")
     fwrite(ld, outfile_name, sep=' ', compress="gzip")
-    ld
-
-    # TODO: add a bunch of LD-writing variations for each of the different methods
 })})
 
+# TODO: have to move this inside the above `sapply`s now that I am not storing all LDs in mem at once anymore
 # Some variants might have been removed from the LD matrices due to having NaNs. Remove these from the sumstats too
 # TODO: find out what is causing these NaNs, and maybe won't need this paragraph at all.
 subset_sumstatss <-
