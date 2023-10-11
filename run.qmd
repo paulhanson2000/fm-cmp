@@ -22,7 +22,7 @@ library(refpanelutil)
 
 # Load Configs
 ```{r}
-fix_yaml <- function(a) {if(is.list(a)) sapply(a, function(a2) lapply(a2, flatten_yaml)) else a}
+fix_yaml <- function(a) {if(is.list(a)) sapply(a, function(a2) lapply(a2, fix_yaml)) else a}
 misc_config <- fix_yaml(yaml::read_yaml("config/misc.config"))
 data_config <- fread("config/data.config")
 loci_config <- fread("config/loci.config")
@@ -511,9 +511,9 @@ if(!dir.exists(paste0(misc_config$scratch_dir,"/ld"))) dir.create(paste0(misc_co
 # TODO: more elegant place to put this?
 seqSetFilter(ref, variant.sel= seqGetData(ref,"annotation/id") %ni% c(NA,"") & !duplicated(seqGetData(ref,"annotation/id")))
 
-sapply(       loci_config$locus,     simplify=F, function(l) {
+lds <- sapply(loci_config$locus,     simplify=F, function(l) {
 sapply(unique(data_config$ancestry), simplify=F, function(anc) {
-    outfile_name <- paste0(misc_config$scratch_dir,"ld_refpanelutil/",l,"-",anc,".ld.gz")
+    outfile_name <- paste0(misc_config$scratch_dir,"ld/",l,"-",anc,".ld.gz")
     if(file.exists(outfile_name)) return(fread(outfile_name))
 
     samples_of_an_ancestry <- samples_of_each_ancestry[[anc]]
@@ -533,7 +533,8 @@ sapply(unique(data_config$ancestry), simplify=F, function(anc) {
                  ref_alleles = ref_alleles,
                  n_threads = 6L)
 
-    fwrite(ld, outfile_name, sep=' ', compress="gzip")
+    fwrite(ld, outfile_name, sep=' ', na="NA", compress="gzip")
+    ld
 })})
 
 # TODO: have to move this inside the above `sapply`s now that I am not storing all LDs in mem at once anymore
