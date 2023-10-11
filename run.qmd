@@ -1,39 +1,66 @@
 ---
-format: html
+format:
+  html:
+    code-fold: show
+    code-tools: true
 toc: true
+execute:
+  eval: false
+  cache-comments: false # TODO not sure if this goes here under execute?
 ---
 
 TODO: stamp each render/run of this script with a UUID, and add log/<method>/<UUID> dirs \
-TODO: according to ?system, system2() is better, so switch to that eventually I guess. More portable. \
 TODO: replace all the "r"s or "c"s with "i"s or "j"s in apply functions like mapply(1:nrow(x), 1:ncol(x), function(r,c) {...}) \
 TODO: print out a bunch of "before and after" tables to make it clearer what the code is doing
 
-# Lib
-```{r}
+# Libraries
+```{r lib, eval=T}
 #| output: false
+library(kableExtra)
 library(data.table)
 library(SeqArray)
 library(SNPRelate)
 library(refpanelutil)
 ```
-```{r}
+
+## Convenience functions
+```{r eval=T}
 "%ni%" <- Negate("%in%")
+fix_yaml <- function(a) {if(is.list(a)) sapply(a, function(a2) lapply(a2, fix_yaml)) else a}
 ```
 
 # Load Configs
-```{r}
-fix_yaml <- function(a) {if(is.list(a)) sapply(a, function(a2) lapply(a2, fix_yaml)) else a}
+<!--- Don't cache this block. Or if you do, add cache.extra=tools::md5sum("filenames") -->
+```{r config-files, eval=T}
 misc_config <- fix_yaml(yaml::read_yaml("config/misc.config"))
 data_config <- fread("config/data.config")
 loci_config <- fread("config/loci.config")
 anno_config <- fread("config/anno.config")
   ld_config <- fread("config/ld.config")
-chr_nm_map <- fread("config/ucsc_chr_names_map.txt")
+ chr_nm_map <- fread("config/ucsc_chr_names_map.txt")
 ```
-TODO: printout "stamp" of configs s.t. in the rendered doc, it is clear what was run.
+
+<!--- TODO: Instead of raw HTML <details>, use result-folding planned in Quarto 1.4 https://github.com/quarto-dev/quarto-cli/issues/341). -->
+<details>
+<summary>Click to expand</summary>
+```{r display-configs, eval=T, echo=F, results="asis"}
+small_tbl <- function(df) df %>% kable() %>% kable_styling() %>% scroll_box(height="200px")
+for(df in list(data_config, loci_config, anno_config, ld_config, chr_nm_map)) {
+  print(small_tbl(df))
+  cat("\n\n <!--- -->\n\n") # https://bookdown.org/yihui/rmarkdown-cookbook/kable.html#generate-multiple-tables-from-a-for-loop
+}
+```
+</details>
+
+```{r hash, eval=T}
+#| code-fold: false
+analysis_hash <- digest::digest(list(misc_config, data_config, loci_config, anno_config, ld_config, chr_nm_map), algo="md5")
+```
+Unique hash of the above config files: __`r analysis_hash`__\
+If two runs of this pipeline have the same hash, then they used the exact same input.
 
 ## Hands-free hardcoded reference panels
-```{r}
+```{r hardcoded-refpanels}
 if(misc_config$ref_panel == "1kg") {
   misc_config$ref_panel_ref_genome <- "hg19"
   misc_config$ref_panel <- paste0("http://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/ALL.chr",1:22,".phase3_shapeit2_mvncall_integrated_v5b.20130502.genotypes.vcf.gz")
@@ -72,7 +99,7 @@ if(misc_config$ref_panel == "gnomad_1kg+hgdp") {
 ```
 
 ## Validate input
-```{r}
+```{r input-validation}
 # TODO:
 # The rest of the code is cleaner under the assumption all input datasets are valid, and error messages early save the user time.
 # data
@@ -109,7 +136,7 @@ Lifting variants by matching their rsID across reference genomes is *more* accur
 ### Convert to UCSC naming scheme
 `liftOver` uses the UCSC naming scheme, we need to too.\
 [AFAIK, b37, hg19, and GRCh37 sequences are equivalent except in mitochondria and some contigs (exactly what is different nobody seems to know... see this somewhat dubious [source](https://gatk.broadinstitute.org/hc/en-us/articles/360035890711-GRCh37-hg19-b37-humanG1Kv37-Human-Reference-Discrepancies)). Beyond that they have different chromosome naming conventions: hg19 uses "chr#" instead of just "#". AFAIK GRCh38 and hg38 are fully equivalent though.]{.aside}
-```{r}
+```{r ucsc-naming}
 #| output: false
 # TODO: could be more elegant to use a reference genomes synonyms file or something
 lapply(list(data_config, loci_config, anno_config), function(config_file) {
@@ -129,7 +156,7 @@ loci_config$chr <- factor(loci_config$chr, levels=unique(chr_nm_map$to))
 ```
 
 ### `liftOver`
-```{r}
+```{r liftover}
 if(!dir.exists("out/liftover")) dir.create("out/liftover", recursive=T)
 
 loci_configs <-
@@ -186,7 +213,7 @@ names(anno_configs) <- unique(data_config$ref_genome)
 
 # Load data
 ## GWAS summary stats
-```{r}
+```{r load-sumstats}
 #| output: false
 # TODO: Temporary hard-coded DIAMANTE meta-analyzed sumstats for fgwas.
 #data_config <- rbind(data_config, data_config[1,]) 
@@ -236,7 +263,7 @@ names(sumstats) <- basename(data_config$filepath)
 
 
 ## Reference panel
-```{r}
+```{r load-refpanel}
 if(any(misc_config$ref_panel != "my_ld")) { # TODO: replace this and future such checks w/ a proper ref_panel_is_ld variable or s/t
   regions_bed_format <- loci_configs[[misc_config$ref_panel_ref_genome]][,.(chr,pos_min,pos_max)]
   # TODO: if ref and ALL sumstats are of the same build, could be more specific and give the chr,pos-1,pos of the variants in the sumstats as regions instead. Would make resuling ref panel file leaner and faster to obtain over the internet.
@@ -324,7 +351,7 @@ if(!any(grepl("^rs", ref_panel_ids))) { # TODO: Actually can skip this if ref pa
 ```
 
 ## Reference panel `sample_info`
-```{r}
+```{r load-sample-info}
 if(any(misc_config$ref_panel != "my_ld")) {
   sample_info <- fread(misc_config$sample_info_file)[, c(misc_config$sample_id_field, misc_config$sample_ancestry_field), with=F]
   setnames(sample_info, c("id","ancestry"))
@@ -338,7 +365,7 @@ Only keep variants which:
 1. Are within the loci specified in `config.loci`
 2. Have ancestry-specific MAF above `r misc_config$maf_threshold` for that sumstat file's ancestry
 3. Are present in both sumstats and reference panel
-```{r}
+```{r filter-sumstats}
 #| output: false
 loci <- loci_configs[[misc_config$ref_panel_ref_genome]]
 
@@ -387,7 +414,7 @@ sumstats <- mapply(sumstats, data_config$ancestry, SIMPLIFY=F, FUN = function(s,
 
 # Annotation
 ## Add Annotation Columns
-```{r}
+```{r anno-cols}
 if(!is.null(misc_config$anno_method)) {
 # TODO: PAINTOR's script is fast, but would be more elegant to do in R than system calls to Python
 
@@ -427,7 +454,7 @@ rm(anno_cols)
 ```
 
 ## fgwas
-```{r}
+```{r fgwas}
 if("fgwas" %in% misc_config$anno_method) {
   if(!dir.exists("in/fgwas")) dir.create("in/fgwas", recursive=T)
   if(!dir.exists("out/fgwas")) dir.create("out/fgwas")
@@ -467,7 +494,7 @@ if("fgwas" %in% misc_config$anno_method) {
 
 # Subset
 Split the summary stats into sets of subsets, one per locus.
-```{r}
+```{r subset-sumstats}
 # TODO: update w/ tapply. B/c now that liftover'd, one locus can have multiple regions.
   # Don't have to do now for the DIAMANTE data since all loci are made of one region in b37.
   # This change is only required to support datasets of multiple reference genomes, or multi-region user-specified loci.
@@ -505,7 +532,7 @@ rm(i,l)
 
 # LD
 Calculate LD per ancestry per locus.
-```{r}
+```{r ld}
 if(!dir.exists(paste0(misc_config$scratch_dir,"/ld"))) dir.create(paste0(misc_config$scratch_dir,"/ld"))
 
 # TODO: more elegant place to put this?
