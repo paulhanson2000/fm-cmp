@@ -1,0 +1,20 @@
+---
+format: html
+---
+
+```{r}
+#| cache: true
+#| cache-vars: a
+a <- 2 
+```
+
+```{r}
+#| cache: true
+a <- a + 10
+```
+
+```{r}
+#| cache: true
+#| cache-globals: a
+print(a)
+```

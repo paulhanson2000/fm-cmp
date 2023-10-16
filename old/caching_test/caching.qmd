@@ -1,0 +1,35 @@
+---
+format: html
+---
+
+```{r nochange}
+#| cache: true
+z <- 2
+print("nochange")
+```
+
+```{r cb1, cache.inval = file.mtime("testfile.txt")}
+#| cache: true
+f <- readLines("testfile.txt")
+```
+
+```{r hash}
+#| cache: false
+hash <- digest::digest(f)
+```
+
+```{r out, cache.inval = hash}
+#| cache: true
+a <- as.integer(f)+10
+```
+
+```{r print}
+#| cache: true
+#| dependson: nochange
+print(a)
+```
+
+```{r print2}
+#| cache: false
+print(a)
+```

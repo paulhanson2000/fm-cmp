@@ -1,0 +1,25 @@
+---
+format: html
+---
+
+```{r}
+library(data.table)
+```
+
+```{r}
+#| cache: true
+#| cache-vars: [a,b]
+a <- data.table(one=1, two=2)
+b <- 8
+```
+
+```{r}
+#| cache: true
+#| cache-vars: a
+a[, two := 2000]
+```
+
+```{r}
+print(a)
+print(b)
+```
