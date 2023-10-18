@@ -78,7 +78,7 @@ Unique hash of the above config files: **`r config_hash`**\
 If two runs of this pipeline have the same hash, they used the exact same configs. 
 
 ## Hands-free hardcoded reference panels
-```{r cache.path = paste("cache/",config_hash)}
+```{r cache.path = paste0("cache/",config_hash)}
 #| label: hardcoded-refpanels
 #| cache: true
 if(misc_config$ref_panel == "1kg") {
@@ -119,7 +119,7 @@ if(misc_config$ref_panel == "gnomad_1kg+hgdp") {
 ```
 
 ## Validate input
-```{r cache.path = paste("cache/",config_hash)}
+```{r cache.path = paste0("cache/",config_hash)}
 #| label: input-validation
 #| cache: false
 # TODO:
@@ -160,7 +160,7 @@ Therefore, summary stats are lifted via rsIDs later (if their build is not alrea
 ### Convert to UCSC naming scheme
 `liftOver` requires the UCSC naming scheme (e.g. "chr#", not "#", and "hg19" instead of "GRCh37"), so we need to convert.\
 [**GRCh37**, **hg19**, and **b37** genome builds are equivalent — except in mitochondria and some contigs (exactly what is different nobody seems to know... see this somewhat dubious [source](https://gatk.broadinstitute.org/hc/en-us/articles/360035890711-GRCh37-hg19-b37-humanG1Kv37-Human-Reference-Discrepancies)). Beyond that, they have different naming conventions: hg19 uses "chr#" instead of "#". I believe GRCh**38** and hg**38** *are* fully equivalent though.]{.aside}
-```{r cache.path = paste("cache/",config_hash)}
+```{r cache.path = paste0("cache/",config_hash)}
 #| label: ucsc-naming
 #| cache: true
 #| cache-vars: [data_config, loci_config, anno_config]
@@ -183,7 +183,7 @@ loci_config$chr <- factor(loci_config$chr, levels=unique(chr_nm_map$to))
 ```
 
 ### `liftOver`
-```{r cache.path = paste("cache/",config_hash)}
+```{r cache.path = paste0("cache/",config_hash)}
 #| label: liftover
 #| cache: true
 #| dependson: ucsc-naming
@@ -241,16 +241,10 @@ lapply(unique(data_config$ref_genome), function(dg) {
 
 # Load data
 ## GWAS summary stats
-```{r cache.path = paste("cache/",config_hash)}
+```{r cache.path = paste0("cache/",config_hash)}
 #| label: load-sumstats
 #| cache: true
 #| output: false
-# TODO: Temporary hard-coded DIAMANTE meta-analyzed sumstats for fgwas.
-#data_config <- rbind(data_config, data_config[1,]) 
-#data_config[4, `:=`(filepath="data/DIAMANTE2022/sumstat/DIAMANTE-TA.sumstat.txt",
-#                    n=NA, ancestry=NA, eaf_col=NA,
-#                    b_col=10, se_col=11, p_col=12)]
-
 sumstats <- lapply(1:nrow(data_config), function(r) {
   loci <- loci_configs[[ data_config[r,ref_genome] ]] # Loci with coords lifted to the current data file's ref genome
 
@@ -290,9 +284,13 @@ sumstats <- lapply(1:nrow(data_config), function(r) {
 })
 names(sumstats) <- basename(data_config$filepath)
 ```
-
-```{r TMP-PRINT}
-print(nrow(sumstats[[1]]))
+```{r cache.path = paste0("cache/",config_hash)}
+#| label: meta-sumstat
+#| cache: true
+meta <- data_config$ancestry=="META"
+meta_sumstat <- sumstats[[which(meta)]]
+sumstats <- sumstats[!meta]
+data_config <- data_config[!meta]
 ```
 
 ## Reference panel
@@ -390,7 +388,7 @@ if(!any(grepl("^rs", ref_panel_ids))) { # TODO: Actually can skip this if ref pa
 ```
 
 ## Reference panel `sample_info`
-```{r cache.path = paste("cache/",config_hash)}
+```{r cache.path = paste0("cache/",config_hash)}
 #| label: load-sample-info
 #| cache: true
 if(any(misc_config$ref_panel != "my_ld")) {
@@ -407,7 +405,7 @@ Only keep variants which:
 1. Are within the loci specified in `config.loci`
 2. Have ancestry-specific MAF above `r misc_config$maf_threshold` for that sumstat file's ancestry
 3. Are present in both sumstats and reference panel
-```{r cache.path=paste("cache/",config_hash)}
+```{r cache.path = paste0("cache/",config_hash)}
 #| label: filter-sumstats
 #| cache: true
 #| cache-vars: sumstats
@@ -449,69 +447,62 @@ sumstats <- mapply(sumstats, data_config$ancestry, SIMPLIFY=F, FUN = function(s,
   s
 })
 
-# TODO: tmp
-#sumstats_TA_cpy <- sumstats[[4]]
-#ancestres_rsids_union <- Reduce(union, lapply(sumstats[1:3], '[', j=rs_id))
-#sumstats[[4]] <- sumstats[[4]][rs_id %in% ancestries_rsids_union]
-#rm(ancestries_rsids_union)
+rsids_union <- Reduce(union, lapply(sumstats, '[', j=rs_id))
+meta_sumstat <- meta_sumstat[rs_id %in% rsids_union]
 ```
 
 
 # Annotation
 ## Add Annotation Columns
-```{r}
+```{r cache.path = paste0("cache/",config_hash)}
 #| label: anno-cols
+#| cache: true
+#| cache-vars: meta_sumstat
 #| eval: false
-# TODO: ^ fix this hardcoding and rm the eval: false
-    # In summary, only add anno_cols to the META "ancestry" sumstats file.
 if(!is.null(misc_config$anno_method)) {
-# TODO: PAINTOR's script is fast, but would be more elegant to do in R than system calls to Python
-
-# TODO: transition from doing separately for each ancestry to once on the trans-ancestry file
-#anno_colss <- mapply(sumstats, 1:length(sumstats), SIMPLIFY=F, FUN = function(sumstat,i) {
-anno_cols <- {
-  sumstat <- sumstats[[4]] # TODO: the trans-ancestry meta-analyzed sumstats, please remove hard coding
-  scratch <- misc_config$scratch_dir
-  py_env_dir <- paste0(scratch,"/py_env/")
-
-  fwrite(sumstat[, .(chr,pos)], paste0(scratch,"/sumstat"), sep=' ')
-  writeLines(anno_config$bed_file, paste0(scratch,"/config.anno.tmp"))
-
-  if(!dir.exists(py_env_dir)) {
-    system(paste0("virtualenv ",py_env_dir,"; ",
-                  "source ",py_env_dir,"bin/activate; ",
-                  "python -m pip install numpy"))
+  # TODO: PAINTOR's script is fast, but would be more elegant to do in R than system calls to Python
+  anno_cols <- {
+    scratch <- misc_config$scratch_dir
+    py_env_dir <- paste0(scratch,"/py_env/")
+  
+    fwrite(meta_sumstat[, .(chr,pos)], paste0(scratch,"/fgwas_sumstat_input"), sep=' ')
+    writeLines(anno_config$bed_file, paste0(scratch,"/config.anno.tmp"))
+  
+    if(!dir.exists(py_env_dir)) {
+      system(paste0("virtualenv ",py_env_dir,"; ",
+                    "source ",py_env_dir,"bin/activate; ",
+                    "python -m pip install numpy"))
+    }
+    system(paste0("source ",py_env_dir,"bin/activate; ",
+                  "python3 third_party/PAINTOR_V3.0/PAINTOR_Utilities/AnnotateLocus.py",
+                    " -l ",scratch,"/fgwas_sumstat_input -c chr -p pos",
+                    " -i ",scratch,"/config.anno.tmp",
+                    " -o ",scratch,"/anno_cols.txt"))
+  
+    anno_cols <- fread(paste0(scratch,"/anno_cols.txt"))
+    names(anno_cols) <- anno_config$name
+  
+    unlink("config.anno.tmp")
+    unlink(paste0(scratch,"/anno_cols.txt"))
+    unlink(paste0(scratch,"/fgwas_sumstat_input"))
+    anno_cols 
   }
-  system(paste0("source ",py_env_dir,"bin/activate; ",
-                "python3 third_party/PAINTOR_V3.0/PAINTOR_Utilities/AnnotateLocus.py",
-                  " -l ",scratch,"/sumstat -c chr -p pos",
-                  " -i ",scratch,"/config.anno.tmp",
-                  " -o ",scratch,"/anno_cols.txt"))
 
-  anno_cols <- fread(paste0(scratch,"/anno_cols.txt"))
-  names(anno_cols) <- anno_config$name
-
-  unlink("config.anno.tmp")
-  unlink(paste0(scratch,"/anno_cols.txt"))
-  unlink(paste0(scratch,"/sumstat"))
-  anno_cols 
-}
-
-sumstats[[4]] <- cbind(sumstats[[4]], anno_cols)
-rm(anno_cols)
+  meta_sumstat <- cbind(meta_sumstat, anno_cols)
 }
 ```
 
 ## fgwas
-```{r cache.path=paste("config/",config_hash)}
+```{r cache.path = paste0("config/",config_hash)}
 #| label: fgwas
 #| cache: true
+#| cache-vars: [best_annos, fgwas_results]
 if("fgwas" %in% misc_config$anno_method) {
   if(!dir.exists("in/fgwas")) dir.create("in/fgwas", recursive=T)
   if(!dir.exists("out/fgwas")) dir.create("out/fgwas")
   
-  # Takes the sumstats, formats them in a way fgwas likes, then gets the annotations of the best-likelihood model.
-  s <- sumstats[[4]]
+  # Formats meta_sumstat in a way fgwas likes, then gets the annotations of the best-likelihood model.
+  s <- meta_sumstat
   s[,SEGNUMBER := as.integer(locus)]
   s <- s[, .SD, .SDcols=c("rs_id","chr","pos","z","se","SEGNUMBER",anno_config$name)]
   setnames(s,           c("SNPID","CHR","POS","Z","SE","SEGNUMBER",anno_config$name))
@@ -545,7 +536,7 @@ if("fgwas" %in% misc_config$anno_method) {
 
 # Subset
 Split the summary stats into sets of subsets, one per locus.
-```{r cache.path=paste("cache/",config_hash)}
+```{r cache.path = paste0("cache/",config_hash)}
 #| label: subset-sumstats
 #| cache: true
 #| cache-vars: [subset_sumstatss, loci_configs]
@@ -553,12 +544,8 @@ Split the summary stats into sets of subsets, one per locus.
   # Don't have to do now for the DIAMANTE data since all loci are made of one region in b37.
   # This change is only required to support datasets of multiple reference genomes, or multi-region user-specified loci.
 
-#sumstats4 <- sumstats[[4]] # TODO: temporary until meta-analysis implemented...
-#sumstats[[4]] <- NULL
-
 subset_sumstatss <- lapply(1:nrow(loci_config), function(r) {
                     mapply(sumstats, data_config$ref_genome, SIMPLIFY=F, FUN = function(s, ref_genome) {
-                    #mapply(sumstats, data_config$ref_genome[1:3], SIMPLIFY=F, FUN = function(s, ref_genome) { # TODO: hardcoded [1:3]
   s <- s[order(rs_id)] # important becuase PAINTOR requires all variants to be in the same order for every group
   s <- s[ chr == loci_configs[[ref_genome]][r,chr]     &
           pos >= loci_configs[[ref_genome]][r,pos_min] &
@@ -580,7 +567,6 @@ for(l in loci_config$locus) {
     }
   }
 }
-rm(i,l)
 ```
 
 
@@ -591,7 +577,7 @@ Calculate LD per ancestry per locus.
 #| cache: false
 if(!dir.exists(paste0(misc_config$scratch_dir,"/ld"))) dir.create(paste0(misc_config$scratch_dir,"/ld"))
 
-# TODO: more elegant place to put this?
+seqResetFilter(ref)
 seqSetFilter(ref, variant.sel= seqGetData(ref,"annotation/id") %ni% c(NA,"") & !duplicated(seqGetData(ref,"annotation/id")))
 
 lds <- sapply(loci_config$locus,     simplify=F, function(l) {
@@ -601,7 +587,7 @@ sapply(unique(data_config$ancestry), simplify=F, function(anc) {
     common_rs_ids_in_sumstats_of_an_ancestry <- Reduce(union, lapply(sumstats_of_an_ancestry, '[', j=rs_id))
 
     outfile_name <- paste0(misc_config$scratch_dir,"ld/",l,"-",anc,"-",length(common_rs_ids_in_sumstats_of_an_ancestry),".ld.gz")
-    if(file.exists(outfile_name)) return(fread(outfile_name))
+    if(file.exists(outfile_name)) return(as.matrix(fread(outfile_name)))
 
     # TODO: not generalizable if multiple datasets in an ancestry with different rsIDs and/or different effect alleles.
       # Simple solution would be in data pre-proc: just flip alleles & β & z & etc..
@@ -615,18 +601,17 @@ sapply(unique(data_config$ancestry), simplify=F, function(anc) {
                  variant_ids = common_rs_ids_in_sumstats_of_an_ancestry,
                  ref_alleles = ref_alleles,
                  n_threads = 6L)
-    # TODO: impute NA w/ 0 for now
+    ld[is.na(ld)] <- 0
+    ld <- round(ld, 5) # Save some disk space. (Actually more space-efficient than binary format below 12 digits! Default precision of R's 64b numeric is ~16 digits.)
+    # It is okay to reduce the LD's precision because we are using the correlation of dosages LD approximation -- a lot of the precision is "fake" anyways.
 
     fwrite(ld, outfile_name, sep=' ', na="NA", compress="gzip")
+    # TODO: check if imputing NAs is a big deal or not. If not sure, test how it affects the results vs. just rm'ing whole row.
+      # If imputing to 0s is bad, then if NAs in a row/col, keep only the variant w/ the best p-val in meta_sumstat.
+      # IN ADDITION, will have to RM the rm'd variants FROM THE SUMSTATS of that ancestry TOO, something like what I had before:
+        # mapply(basename(data_config$filepath), data_config$ancestry, SIMPLIFY=F, FUN = function(f,a) {
+        # subset_sumstatss[[l]][[f]][ rs_id %in% colnames(ldss[[l]][[a]]) ] })
     ld
-})})
-
-# TODO: have to move this inside the above `sapply`s now that I am not storing all LDs in mem at once anymore
-# Some variants might have been removed from the LD matrices due to having NaNs. Remove these from the sumstats too
-subset_sumstatss <-
-  sapply(loci_config$locus, simplify=F, function(l) {
-  mapply(basename(data_config$filepath), data_config$ancestry, SIMPLIFY=F, FUN = function(f,a) {
-  subset_sumstatss[[l]][[f]][ rs_id %in% colnames(ldss[[l]][[a]]) ]
 })})
 ```
 
