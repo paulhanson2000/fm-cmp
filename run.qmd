@@ -4,15 +4,12 @@ format:
     code-fold: show
     code-tools: true
 toc: true
-execute:
-  eval: false # TODO TMP
 ---
 
-TODO: stamp each render/run of this script with a UUID, and add log/<method>/<UUID> dirs \
-TODO: print out "before and after" tables to make it clearer what the code is doing
-
-# Libraries
-```{r lib, eval=T}
+# Libraries & Functions
+```{r}
+#| label: lib
+#| cache: false
 #| output: false
 library(kableExtra)
 library(digest)
@@ -21,16 +18,15 @@ library(SeqArray)
 library(SNPRelate)
 library(refpanelutil)
 ```
-
-## Convenience functions
-```{r eval=T}
+```{r}
 "%ni%" <- Negate("%in%")
 fix_yaml <- function(a) {if(is.list(a)) sapply(a, function(a2) lapply(a2, fix_yaml)) else a}
 ```
 
 # Load Configs
-<!--- Don't cache this block. Or if you do, add cache.extra=tools::md5sum("filenames") -->
-```{r config-files, eval=T}
+```{r}
+#| label: config-files
+#| cache: false
 misc_config <- fix_yaml(yaml::read_yaml("config/misc.config"))
 data_config <- fread("config/data.config")
 loci_config <- fread("config/loci-min.config")
@@ -42,10 +38,17 @@ anno_config <- fread("config/anno.config")
 <!--- TODO: Instead of raw HTML <details>, use result-folding planned in Quarto 1.4 https://github.com/quarto-dev/quarto-cli/issues/341). -->
 <details>
 <summary>Click to expand</summary>
-```{r display-misc-config, eval=T, echo=F}
+```{r}
+#| label: display-misc-config
+#| cache: false
+#| echo: false
 cat(yaml::as.yaml(misc_config))
 ```
-```{r display-other-configs, eval=T, echo=F, results="asis"}
+```{r}
+#| label: display-other-configs
+#| cache: false
+#| echo: false
+#| output: "asis"
 small_tbl <- function(df, cap) df %>%
   kable(caption=paste("<p style='text-align: left'><strong>",cap,"</strong></p>")) %>%
   kable_styling("striped") %>%
@@ -64,7 +67,9 @@ if(misc_config$ref_panel == "my_ld") small_tbl(ld_config,"ld_config")
 ```
 </details>
 
-```{r hash, eval=T}
+```{r}
+#| label: hash
+#| cache: false
 #| code-fold: false
 config_hash <- digest(list(misc_config, data_config, loci_config, anno_config, ld_config, chr_nm_map), algo="md5")
 ```
@@ -73,7 +78,9 @@ Unique hash of the above config files: **`r config_hash`**\
 If two runs of this pipeline have the same hash, they used the exact same configs. 
 
 ## Hands-free hardcoded reference panels
-```{r hardcoded-refpanels, eval=T, cache=T, cache.extra = misc_config$ref_panel}
+```{r cache.path = paste("cache/",config_hash)}
+#| label: hardcoded-refpanels
+#| cache: true
 if(misc_config$ref_panel == "1kg") {
   misc_config$ref_panel_ref_genome <- "hg19"
   misc_config$ref_panel <- paste0("http://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/ALL.chr",1:22,".phase3_shapeit2_mvncall_integrated_v5b.20130502.genotypes.vcf.gz")
@@ -112,7 +119,9 @@ if(misc_config$ref_panel == "gnomad_1kg+hgdp") {
 ```
 
 ## Validate input
-```{r input-validation, eval=T}
+```{r cache.path = paste("cache/",config_hash)}
+#| label: input-validation
+#| cache: false
 # TODO:
 # The rest of the code is cleaner under the assumption all input datasets are valid, and error messages early save the user time.
 # data
@@ -142,16 +151,19 @@ if(!dir.exists(misc_config$scratch_dir)) stop(paste0("Scratch directory ", misc_
 
 ## `liftOver` loci and annotations
 We need versions of `anno.config` for the sumstats' build(s), to add annotations to the sumstats.\
-We need versions of `loci.config` for the sumstats' and reference panel's build(s), to subset those big files to only the parts we need.\
+We need versions of `loci.config` for the sumstats' and reference panel's build(s), to subset those big files to only the regions we need.\
 
 Note: It is **not recommended  to use `liftOver` on individual variants** (sources: [1](http://genome.ucsc.edu/FAQ/FAQreleases.html#snpConversion), [2](https://groups.google.com/a/soe.ucsc.edu/g/genome/c/wkgf5DXpwEc/m/wDpsjyDVCQAJ), [3](https://annovar.openbioinformatics.org/en/latest/articles/dbSNP/)). Lifting variants by matching their rsID across builds is more accurate (although even rsIDs can be ambiguous ([source](https://gnomad.broadinstitute.org/help/why-is-this-variant-linked-to-the-wrong-dbsnp-rsid))).\
 
-Therefore, summary stats are lifted via rsIDs later (if their build is not already the same as the reference panel's). Here we lift only the *regions* of `loci.config` and `anno.config`.
+Therefore, summary stats are lifted via rsIDs later (if their build is not already the same as the reference panel's). Here we lift only the *regions* in `loci.config` and `anno.config`.
 
 ### Convert to UCSC naming scheme
 `liftOver` requires the UCSC naming scheme (e.g. "chr#", not "#", and "hg19" instead of "GRCh37"), so we need to convert.\
 [**GRCh37**, **hg19**, and **b37** genome builds are equivalent — except in mitochondria and some contigs (exactly what is different nobody seems to know... see this somewhat dubious [source](https://gatk.broadinstitute.org/hc/en-us/articles/360035890711-GRCh37-hg19-b37-humanG1Kv37-Human-Reference-Discrepancies)). Beyond that, they have different naming conventions: hg19 uses "chr#" instead of "#". I believe GRCh**38** and hg**38** *are* fully equivalent though.]{.aside}
-```{r ucsc-naming, eval=T, cache=T, cache.inval = config_hash}
+```{r cache.path = paste("cache/",config_hash)}
+#| label: ucsc-naming
+#| cache: true
+#| cache-vars: [data_config, loci_config, anno_config]
 #| output: false
 # TODO: Maybe remove this whole code block and just tell the user they must use "hg" naming scheme, and just tell them hg18=grch36, etc. in a comment in the config?
 # TODO: could be more elegant to use a reference genomes synonyms file or something
@@ -171,7 +183,10 @@ loci_config$chr <- factor(loci_config$chr, levels=unique(chr_nm_map$to))
 ```
 
 ### `liftOver`
-```{r liftover, eval=T, cache=T, cache.inval = config_hash}
+```{r cache.path = paste("cache/",config_hash)}
+#| label: liftover
+#| cache: true
+#| dependson: ucsc-naming
 if(!dir.exists("out/liftover")) dir.create("out/liftover", recursive=T)
 
 loci_configs <-
@@ -200,8 +215,7 @@ lapply(union(data_config$ref_genome, misc_config$ref_panel_ref_genome), function
   loci_config_lifted$locus <- factor(loci_config_lifted$locus, levels=unique(loci_config$locus))
   fwrite(loci_config_lifted, paste0("out/liftover/config.loci.",dg), sep=' ')
   loci_config_lifted
-})
-names(loci_configs) <- union(data_config$ref_genome, misc_config$ref_panel_ref_genome)
+}); names(loci_configs) <- union(data_config$ref_genome, misc_config$ref_panel_ref_genome)
 
 anno_configs <- 
 lapply(unique(data_config$ref_genome), function(dg) {
@@ -221,14 +235,15 @@ lapply(unique(data_config$ref_genome), function(dg) {
   })
   fwrite(lifted_anno_config, paste0("out/liftover/config.anno.",dg), sep=' ')
   lifted_anno_config
-})
-names(anno_configs) <- unique(data_config$ref_genome)
+}); names(anno_configs) <- unique(data_config$ref_genome)
 ```
 
 
 # Load data
 ## GWAS summary stats
-```{r load-sumstats}
+```{r cache.path = paste("cache/",config_hash)}
+#| label: load-sumstats
+#| cache: true
 #| output: false
 # TODO: Temporary hard-coded DIAMANTE meta-analyzed sumstats for fgwas.
 #data_config <- rbind(data_config, data_config[1,]) 
@@ -263,13 +278,13 @@ sumstats <- lapply(1:nrow(data_config), function(r) {
   if(data_config[r, is.na(z_col) & !is.na(b_col) & !is.na(se_col)]) sumstat[, z := b/se]
   # TODO: reverse-engineer N from p/z/se/af if n_col not given?
 
-  # TODO: meh, maybe just compare w/ $chr $pos etc. directly instead of creating these IDs?
+  # TODO: maybe just compare w/ $chr $pos etc. directly instead of creating these IDs?
     # No, ID col is good b/c passing ids of this format is the clearest interface for functions like vcfs2Gds and ldCalc
     # But then again, could just reconstruct the ids e/t time? No, too much, b/c'd have to do the Reduce around the paste(), too much.
   #if(data_config[r, !is.na(chr_col) & !is.na(pos_col) & !is.na(other_allele_col) & !is.na(effect_allele_col)])
     #sumstat$chrpos_id <- paste0(sumstat$chr,":",sumstat$pos,"_",sumstat$a0,"_",sumstat$a1) # NOTE: using chr:pos_ref_alt instead of all ":"s, but doesn't matter, split by both : and _ at all times anyways.
 
-  # TODO: add support for chrpos_id_col. Infer chr, pos, a0, a1 cols if chrpos ids are given
+  # TODO: add support for chrpos_id_col. Infer chr, pos, a0, a1 cols if chrpos ids are given.
 
   sumstat
 })
@@ -280,9 +295,10 @@ names(sumstats) <- basename(data_config$filepath)
 print(nrow(sumstats[[1]]))
 ```
 
-
 ## Reference panel
-```{r load-refpanel}
+```{r}
+#| label: load-refpanel
+#| cache: false
 if(any(misc_config$ref_panel != "my_ld")) { # TODO: replace this and future such checks w/ a proper ref_panel_is_ld variable or s/t
   regions_bed_format <- loci_configs[[misc_config$ref_panel_ref_genome]][,.(chr,pos_min,pos_max)]
   # TODO: if ref and ALL sumstats are of the same build, could be more specific and give the chr,pos-1,pos of the variants in the sumstats as regions instead. Would make resuling ref panel file leaner and faster to obtain over the internet.
@@ -312,7 +328,11 @@ if(any(misc_config$ref_panel != "my_ld")) { # TODO: replace this and future such
   }
   ref <- seqOpen(ref_gds_file, readonly=F)
 }
+```
 
+```{r}
+#| label: ref-panel-rsids
+#| cache: false
 { if(all(misc_config$ref_panel == "my_ld")) ref_panel_ids <- NULL # TODO: Reduce(union, etc.. Maybe Reduce(union, lapply(ld_config$filepath, fread, nrow=1)))
   else                                      ref_panel_ids <- seqGetData(ref,"annotation/id") }
 
@@ -370,7 +390,9 @@ if(!any(grepl("^rs", ref_panel_ids))) { # TODO: Actually can skip this if ref pa
 ```
 
 ## Reference panel `sample_info`
-```{r load-sample-info}
+```{r cache.path = paste("cache/",config_hash)}
+#| label: load-sample-info
+#| cache: true
 if(any(misc_config$ref_panel != "my_ld")) {
   sample_info <- fread(misc_config$sample_info_file)[, c(misc_config$sample_id_field, misc_config$sample_ancestry_field), with=F]
   setnames(sample_info, c("id","ancestry"))
@@ -380,11 +402,15 @@ if(any(misc_config$ref_panel != "my_ld")) {
 
 
 # Filter sumstats using ref panel
-Only keep variants which:\
+Only keep variants which:
+
 1. Are within the loci specified in `config.loci`
 2. Have ancestry-specific MAF above `r misc_config$maf_threshold` for that sumstat file's ancestry
 3. Are present in both sumstats and reference panel
-```{r filter-sumstats}
+```{r cache.path=paste("cache/",config_hash)}
+#| label: filter-sumstats
+#| cache: true
+#| cache-vars: sumstats
 #| output: false
 loci <- loci_configs[[misc_config$ref_panel_ref_genome]]
 
@@ -433,7 +459,11 @@ sumstats <- mapply(sumstats, data_config$ancestry, SIMPLIFY=F, FUN = function(s,
 
 # Annotation
 ## Add Annotation Columns
-```{r anno-cols}
+```{r}
+#| label: anno-cols
+#| eval: false
+# TODO: ^ fix this hardcoding and rm the eval: false
+    # In summary, only add anno_cols to the META "ancestry" sumstats file.
 if(!is.null(misc_config$anno_method)) {
 # TODO: PAINTOR's script is fast, but would be more elegant to do in R than system calls to Python
 
@@ -473,7 +503,9 @@ rm(anno_cols)
 ```
 
 ## fgwas
-```{r fgwas}
+```{r cache.path=paste("config/",config_hash)}
+#| label: fgwas
+#| cache: true
 if("fgwas" %in% misc_config$anno_method) {
   if(!dir.exists("in/fgwas")) dir.create("in/fgwas", recursive=T)
   if(!dir.exists("out/fgwas")) dir.create("out/fgwas")
@@ -513,7 +545,10 @@ if("fgwas" %in% misc_config$anno_method) {
 
 # Subset
 Split the summary stats into sets of subsets, one per locus.
-```{r subset-sumstats}
+```{r cache.path=paste("cache/",config_hash)}
+#| label: subset-sumstats
+#| cache: true
+#| cache-vars: [subset_sumstatss, loci_configs]
 # TODO: update w/ tapply. B/c now that liftover'd, one locus can have multiple regions.
   # Don't have to do now for the DIAMANTE data since all loci are made of one region in b37.
   # This change is only required to support datasets of multiple reference genomes, or multi-region user-specified loci.
@@ -551,7 +586,9 @@ rm(i,l)
 
 # LD
 Calculate LD per ancestry per locus.
-```{r ld}
+```{r}
+#| label: ld
+#| cache: false
 if(!dir.exists(paste0(misc_config$scratch_dir,"/ld"))) dir.create(paste0(misc_config$scratch_dir,"/ld"))
 
 # TODO: more elegant place to put this?
@@ -559,12 +596,12 @@ seqSetFilter(ref, variant.sel= seqGetData(ref,"annotation/id") %ni% c(NA,"") & !
 
 lds <- sapply(loci_config$locus,     simplify=F, function(l) {
 sapply(unique(data_config$ancestry), simplify=F, function(anc) {
-    outfile_name <- paste0(misc_config$scratch_dir,"ld/",l,"-",anc,".ld.gz")
-    if(file.exists(outfile_name)) return(fread(outfile_name))
-
     samples_of_an_ancestry <- samples_of_each_ancestry[[anc]]
     sumstats_of_an_ancestry <- subset_sumstatss[[l]][which(data_config$ancestry == anc)]
     common_rs_ids_in_sumstats_of_an_ancestry <- Reduce(union, lapply(sumstats_of_an_ancestry, '[', j=rs_id))
+
+    outfile_name <- paste0(misc_config$scratch_dir,"ld/",l,"-",anc,"-",length(common_rs_ids_in_sumstats_of_an_ancestry),".ld.gz")
+    if(file.exists(outfile_name)) return(fread(outfile_name))
 
     # TODO: not generalizable if multiple datasets in an ancestry with different rsIDs and/or different effect alleles.
       # Simple solution would be in data pre-proc: just flip alleles & β & z & etc..
@@ -578,6 +615,7 @@ sapply(unique(data_config$ancestry), simplify=F, function(anc) {
                  variant_ids = common_rs_ids_in_sumstats_of_an_ancestry,
                  ref_alleles = ref_alleles,
                  n_threads = 6L)
+    # TODO: impute NA w/ 0 for now
 
     fwrite(ld, outfile_name, sep=' ', na="NA", compress="gzip")
     ld
@@ -585,7 +623,6 @@ sapply(unique(data_config$ancestry), simplify=F, function(anc) {
 
 # TODO: have to move this inside the above `sapply`s now that I am not storing all LDs in mem at once anymore
 # Some variants might have been removed from the LD matrices due to having NaNs. Remove these from the sumstats too
-# TODO: find out what is causing these NaNs, and maybe won't need this paragraph at all.
 subset_sumstatss <-
   sapply(loci_config$locus, simplify=F, function(l) {
   mapply(basename(data_config$filepath), data_config$ancestry, SIMPLIFY=F, FUN = function(f,a) {
