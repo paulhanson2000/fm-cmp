@@ -78,7 +78,7 @@ Unique hash of the above config files: **`r config_hash`**\
 If two runs of this pipeline have the same hash, they used the exact same configs. 
 
 ## Hands-free hardcoded reference panels
-```{r cache.path = paste0("cache/",config_hash)}
+```{r cache.path = paste0("cache/",config_hash,"/")}
 #| label: hardcoded-refpanels
 #| cache: true
 if(misc_config$ref_panel == "1kg") {
@@ -119,7 +119,7 @@ if(misc_config$ref_panel == "gnomad_1kg+hgdp") {
 ```
 
 ## Validate input
-```{r cache.path = paste0("cache/",config_hash)}
+```{r cache.path = paste0("cache/",config_hash,"/")}
 #| label: input-validation
 #| cache: false
 # TODO:
@@ -160,7 +160,7 @@ Therefore, summary stats are lifted via rsIDs later (if their build is not alrea
 ### Convert to UCSC naming scheme
 `liftOver` requires the UCSC naming scheme (e.g. "chr#", not "#", and "hg19" instead of "GRCh37"), so we need to convert.\
 [**GRCh37**, **hg19**, and **b37** genome builds are equivalent — except in mitochondria and some contigs (exactly what is different nobody seems to know... see this somewhat dubious [source](https://gatk.broadinstitute.org/hc/en-us/articles/360035890711-GRCh37-hg19-b37-humanG1Kv37-Human-Reference-Discrepancies)). Beyond that, they have different naming conventions: hg19 uses "chr#" instead of "#". I believe GRCh**38** and hg**38** *are* fully equivalent though.]{.aside}
-```{r cache.path = paste0("cache/",config_hash)}
+```{r cache.path = paste0("cache/",config_hash,"/")}
 #| label: ucsc-naming
 #| cache: true
 #| cache-vars: [data_config, loci_config, anno_config]
@@ -183,7 +183,7 @@ loci_config$chr <- factor(loci_config$chr, levels=unique(chr_nm_map$to))
 ```
 
 ### `liftOver`
-```{r cache.path = paste0("cache/",config_hash)}
+```{r cache.path = paste0("cache/",config_hash,"/")}
 #| label: liftover
 #| cache: true
 #| dependson: ucsc-naming
@@ -241,7 +241,7 @@ lapply(unique(data_config$ref_genome), function(dg) {
 
 # Load data
 ## GWAS summary stats
-```{r cache.path = paste0("cache/",config_hash)}
+```{r cache.path = paste0("cache/",config_hash,"/")}
 #| label: load-sumstats
 #| cache: true
 #| output: false
@@ -284,7 +284,7 @@ sumstats <- lapply(1:nrow(data_config), function(r) {
 })
 names(sumstats) <- basename(data_config$filepath)
 ```
-```{r cache.path = paste0("cache/",config_hash)}
+```{r cache.path = paste0("cache/",config_hash,"/")}
 #| label: meta-sumstat
 #| cache: true
 meta <- data_config$ancestry=="META"
@@ -388,7 +388,7 @@ if(!any(grepl("^rs", ref_panel_ids))) { # TODO: Actually can skip this if ref pa
 ```
 
 ## Reference panel `sample_info`
-```{r cache.path = paste0("cache/",config_hash)}
+```{r cache.path = paste0("cache/",config_hash,"/")}
 #| label: load-sample-info
 #| cache: true
 if(any(misc_config$ref_panel != "my_ld")) {
@@ -405,7 +405,7 @@ Only keep variants which:
 1. Are within the loci specified in `config.loci`
 2. Have ancestry-specific MAF above `r misc_config$maf_threshold` for that sumstat file's ancestry
 3. Are present in both sumstats and reference panel
-```{r cache.path = paste0("cache/",config_hash)}
+```{r cache.path = paste0("cache/",config_hash,"/")}
 #| label: filter-sumstats
 #| cache: true
 #| cache-vars: sumstats
@@ -454,7 +454,7 @@ meta_sumstat <- meta_sumstat[rs_id %in% rsids_union]
 
 # Annotation
 ## Add Annotation Columns
-```{r cache.path = paste0("cache/",config_hash)}
+```{r cache.path = paste0("cache/",config_hash,"/")}
 #| label: anno-cols
 #| cache: true
 #| cache-vars: meta_sumstat
@@ -493,7 +493,7 @@ if(!is.null(misc_config$anno_method)) {
 ```
 
 ## fgwas
-```{r cache.path = paste0("config/",config_hash)}
+```{r cache.path = paste0("config/",config_hash,"/")}
 #| label: fgwas
 #| cache: true
 #| cache-vars: [best_annos, fgwas_results]
@@ -536,7 +536,7 @@ if("fgwas" %in% misc_config$anno_method) {
 
 # Subset
 Split the summary stats into sets of subsets, one per locus.
-```{r cache.path = paste0("cache/",config_hash)}
+```{r cache.path = paste0("cache/",config_hash,"/")}
 #| label: subset-sumstats
 #| cache: true
 #| cache-vars: [subset_sumstatss, loci_configs]
@@ -622,7 +622,7 @@ SuSiEx is a command-line python program. It expects the following:\
 A summary stats file, as follows:\ 
 TODO: make nice table\
 The β column _must_ be named "BETA" or "OR", but besides that they may be named arbitrarily.
-```{r}
+```{r eval=F}
 if("susiex" %in% misc_config$fm_methods) {
 
 # Prep input
@@ -678,7 +678,7 @@ err <- lapply(1:nrow(loci_config), function(r) {
 ### Prep Input
 PAINTOR only works on variants shared by ALL input datasets.\
 TODO: desc
-```{r}
+```{r eval=F}
 if(!dir.exists("in/paintor")) dir.create("in/paintor")
 # input.files
 writeLines(unique(loci_config$locus), "in/paintor/input.files")
@@ -735,7 +735,7 @@ lapply(unique(loci_config$locus), function(l) {
 ```
 
 ### Run PAINTOR
-```{r}
+```{r eval=F}
 if(!dir.exists("out/paintor")) dir.create("out/paintor", recursive=T)
 system(paste("third_party/PAINTOR_V3.0/PAINTOR",
                "-input in/paintor/input.files",
