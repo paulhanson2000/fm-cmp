@@ -10,15 +10,16 @@
     # Rows sorted by SEGNUMBER,CHR,POS
 
 
-fgwasPruneInsignifAnnos <- function(sumstat_file, annos_to_try, fgwas_bin, silent=T) {
+fgwasPruneInsignifAnnos <- function(sumstat_file, annos_to_try, fgwas_bin, scratch_dir="/tmp", silent=T) {
     runs <- data.table(
       anno_to_try = annos_to_try,
       model_to_run = annos_to_try,
       output_name = paste0("out/fgwas/prune_",annos_to_try)) # TODO: eventually, don't hardcode the output dir 
-    fwrite(runs, "in/fgwas/runs.tsv", sep='\t', col.names=F)
+    runs_file <- paste0(scratch_dir,"/fgwas_runs.tsv")
+    fwrite(runs, runs_file, sep='\t', col.names=F)
 
     system(ignore.stdout=silent, ignore.stderr=silent, paste(
-      "parallel -a in/fgwas/runs.tsv --colsep '\t'",
+      "parallel -a", runs_file, "--colsep '\t'",
       fgwas_bin, "-fine",
         "-i", sumstat_file,
         "-w {2}",
@@ -34,7 +35,7 @@ fgwasPruneInsignifAnnos <- function(sumstat_file, annos_to_try, fgwas_bin, silen
 }
 
 # Iteratively adds to a model the anno which most increases likelihood, until no more improvement. 
-fgwasGetBestLikelihoodAnnos <- function(sumstat_file, annos_to_try, fgwas_bin, silent=T) {
+fgwasGetBestLikelihoodAnnos <- function(sumstat_file, annos_to_try, fgwas_bin, scratch_dir="/tmp", silent=T) {
 
   aux_fxn <- function(sumstat_file, annos_to_try, annos_acc, best_llk, fgwas_bin, silent) {
     # It may seem like it would be easier to parallelize a for loop in R than use GNU parallel.
@@ -44,10 +45,11 @@ fgwasGetBestLikelihoodAnnos <- function(sumstat_file, annos_to_try, fgwas_bin, s
       anno_to_try = annos_to_try,
       model_to_run = sapply(annos_to_try, function(anno_to_try) paste(collapse='+', c(annos_acc, anno_to_try))),
       output_name  = paste0("out/fgwas/try_",length(annos_acc),"+",annos_to_try))
-    fwrite(runs, "in/fgwas/runs.tsv", sep='\t', col.names=F)
+    runs_file <- paste0(scratch_dir,"/fgwas_runs.tsv")
+    fwrite(runs, runs_file, sep='\t', col.names=F)
 
     system(ignore.stdout=silent, ignore.stderr=silent, paste(
-      "parallel -a in/fgwas/runs.tsv --colsep '\t'",
+      "parallel -a", runs_file, "--colsep '\t'",
       fgwas_bin, "-fine",
         "-i", sumstat_file,
         "-w {2}",  # model, e.g. anno1+anno3+anno7
@@ -78,7 +80,7 @@ fgwasGetBestLikelihoodAnnos <- function(sumstat_file, annos_to_try, fgwas_bin, s
 
 
 # Tests which penalty value has the best cross-validation likelihood, given the model fgwasGetBestLikelihoodModel()
-fgwasGetBestXValidationPenalty <- function(sumstat_file, annos, fgwas_bin, silent=T) {
+fgwasGetBestXValidationPenalty <- function(sumstat_file, annos, fgwas_bin, scratch_dir="/tmp", silent=T) {
   # TODO: Does the function likelihood(model,penalty) have only one minimum? If so, could optimize by making more intelligent steps than just 0.05 intervals.
     # NOTE: can withhold from parallelizing this function until it's clear whether making more intelligent steps is possible
   # TODO: Go finer than steps of 0.05?
@@ -109,7 +111,7 @@ fgwasGetBestXValidationPenalty <- function(sumstat_file, annos, fgwas_bin, silen
 
 
 # Iteratively drops annos from the model until the cross-validation likelihood is maximized.
-fgwasGetBestXValidatedAnnos <- function(sumstat_file, annos, xv_penalty, best_xv_llk, fgwas_bin, silent=T) {
+fgwasGetBestXValidatedAnnos <- function(sumstat_file, annos, xv_penalty, best_xv_llk, fgwas_bin, scratch_dir="/tmp", silent=T) {
   # TODO: Here I assume that dropping an anno later in the model *might* cause an anno earlier in the model to now also become worth dropping even if it wasn't before.
     # This might be overly cautious, in which case, this could be optimized by only needing to traverse the model once, dropping whatever increases the llk without having to look back.
     # NOTE: can withhold from parallelizing this function until the answer to this is clear.
@@ -137,6 +139,5 @@ fgwasGetBestXValidatedAnnos <- function(sumstat_file, annos, xv_penalty, best_xv
 
     return(fgwasGetBestXValidatedAnnos(sumstat_file, xv_penalty, trimmed_annos, new_best_xv_llk))
   } else return(annos)
-
 }
-fgwasGetBestXValidatedAnnos <- tailr::loop_transform(fgwasGetBestXValidatedAnnos)
+# TODO: do the whole tailr::loop_transform(aux_fxn) shebang

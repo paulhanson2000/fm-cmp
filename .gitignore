@@ -8,6 +8,7 @@ data
 *.RData
 
 scratch/
+cache/
 
 quarto_output/
 /.quarto/

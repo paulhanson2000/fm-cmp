@@ -187,7 +187,8 @@ loci_config$chr <- factor(loci_config$chr, levels=unique(chr_nm_map$to))
 #| label: liftover
 #| cache: true
 #| dependson: ucsc-naming
-if(!dir.exists("out/liftover")) dir.create("out/liftover", recursive=T)
+out_dir <- paste0("out/",config_hash,"/liftover")
+if(!dir.exists(out_dir)) dir.create(out_dir, recursive=T)
 
 loci_configs <-
 lapply(union(data_config$ref_genome, misc_config$ref_panel_ref_genome), function(dg) {
@@ -408,7 +409,7 @@ Only keep variants which:
 ```{r cache.path = paste0("cache/",config_hash,"/")}
 #| label: filter-sumstats
 #| cache: true
-#| cache-vars: sumstats
+#| cache-vars: [sumstats, samples_of_each_ancestry]
 #| output: false
 loci <- loci_configs[[misc_config$ref_panel_ref_genome]]
 
@@ -458,7 +459,6 @@ meta_sumstat <- meta_sumstat[rs_id %in% rsids_union]
 #| label: anno-cols
 #| cache: true
 #| cache-vars: meta_sumstat
-#| eval: false
 if(!is.null(misc_config$anno_method)) {
   # TODO: PAINTOR's script is fast, but would be more elegant to do in R than system calls to Python
   anno_cols <- {
@@ -493,13 +493,13 @@ if(!is.null(misc_config$anno_method)) {
 ```
 
 ## fgwas
-```{r cache.path = paste0("config/",config_hash,"/")}
+```{r cache.path = paste0("cache/",config_hash,"/")}
 #| label: fgwas
 #| cache: true
 #| cache-vars: [best_annos, fgwas_results]
 if("fgwas" %in% misc_config$anno_method) {
-  if(!dir.exists("in/fgwas")) dir.create("in/fgwas", recursive=T)
-  if(!dir.exists("out/fgwas")) dir.create("out/fgwas")
+  out_dir <- paste0("out/",config_hash,"/fgwas")
+  if(!dir.exists(out_dir)) dir.create(out_dir, recursive=T)
   
   # Formats meta_sumstat in a way fgwas likes, then gets the annotations of the best-likelihood model.
   s <- meta_sumstat
@@ -511,13 +511,13 @@ if("fgwas" %in% misc_config$anno_method) {
   #s[,chr := paste0("chr",CHR)]     # fgwas uses UCSC "chr#" syntax, not just the number.
   s[,`:=`(F=0, N=0)]               # fgwas errors if missing F or N col, even though overridden by SE.
   
-  input_filename <- paste0("in/fgwas/fgwas_input_sumstats.gz")
+  input_filename <- paste0(misc_config$scratch_dir,"/fgwas_input_sumstats.gz")
   fwrite(s, input_filename, sep=' ', compress="gzip")
   
   source("inc/fgwasFxns.R")
 
   annos      <- fgwasPruneInsignifAnnos(input_filename, anno_config$name, fgwas_bin="third_party/fgwas/src/fgwas-100_iter", silent=T)
-  if(length(annos)==0) { message("No annotations were significant.") }
+  if(length(annos)==0) { best_annos <- NULL; fgwas_results <- NULL; message("No annotations were significant.") }
   else {
     annos      <- fgwasGetBestLikelihoodAnnos(input_filename, annos, fgwas_bin="third_party/fgwas/src/fgwas-1000_iter", silent=T)
     l          <- fgwasGetBestXValidationPenalty(input_filename, annos, fgwas_bin="third_party/fgwas/src/fgwas-1000_iter", silent=T)
@@ -539,7 +539,7 @@ Split the summary stats into sets of subsets, one per locus.
 ```{r cache.path = paste0("cache/",config_hash,"/")}
 #| label: subset-sumstats
 #| cache: true
-#| cache-vars: [subset_sumstatss, loci_configs]
+#| cache-vars: [subset_sumstatss, loci_configs, loci_config]
 # TODO: update w/ tapply. B/c now that liftover'd, one locus can have multiple regions.
   # Don't have to do now for the DIAMANTE data since all loci are made of one region in b37.
   # This change is only required to support datasets of multiple reference genomes, or multi-region user-specified loci.

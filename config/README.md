@@ -39,21 +39,24 @@ Specify which reference panel to use, which fine-mapping methods to run, MAF/MAC
 + `missingness_threshold`: maximum proportion of missing data variants in the reference panel are allowed to have. NULL to set no threshold.
 + `ref_panel`: reference panel used for LD and filtering. Many options:
   + 3 pre-implemented options are availabe, totally hands-free. All you need to do is specify one of the following strings:
-    + `"gnomAD_1kG+HGDP"`: (recommended) gnomAD combined 1000 Genomes 30x and Human Genome Diversity Project
-    + `"1kG_30x"`: 1000 Genomes 30x coverage ([paper](https://doi.org/10.1016/j.cell.2022.08.004))
+    + `"gnomad_1kg+hgdp"`: (recommended) gnomAD combined 1000 Genomes 30x and Human Genome Diversity Project
+    + `"1kg_30x"`: 1000 Genomes 30x coverage ([paper](https://doi.org/10.1016/j.cell.2022.08.004))
     + `"1kG"`: 1000 Genomes phase 3
   + VCF file(s) to be used as the reference panel. If you specify multiple files, make sure they have the same samples; for example, if you have files split by chromosome.
   + SeqArray GDS file
   + `"my_ld"`; will use pre-computed LD matrices specified in `config.ld`. Useful if you cannot have direct access to the individual-level data of the reference panel you wish to use.
-+ ` gnomad_count_fin_as_eur`: TRUE or FALSE. The hands-free gnomAD reference panel has separate Finnush and non-Finnish European populations. Should these be combined into single EUR ancestry group?
++ ` gnomad_count_fin_as_eur`: true or false. The hands-free gnomAD reference panel has separate Finnush and non-Finnish European populations. Should these be combined into single EUR ancestry group?
 + `ref_panel_ref_genome`: if you are providing your own reference panel, specify which reference genome its positions are based on in UCSC naming scheme (e.g. "hg19", "hg39")
 + Sample info (if you are providing your own reference panel)
   + `sample_info_file`
   + `sample_id_field`: name of the sample ID column.
   + `sample_ancestry_field`: name of the sample ancestry column.
+
+## `fm.config`
+Specify which fine-mapping methods to run, what p-value thresholds to use for them, and if they should use built-in annotation-incorportation functionality if any.
 + `methods`: which fine-mapping methods to generate outputs for.
-+ Functional annotation incorporation methods
-  + `use_paintor_anno_functionality`: (TODO) TRUE or FALSE, whether to use PAINTOR's built-in support for annotations or not. If TRUE, will override other annotation methods.
++ `pval_thresholds`: p-value threshold for each method. Some fine-mapping methods don't handle large amounts of variants well so this may be helpful. (TODO: list which methods this is/isn't recommended for.)
++ `use_anno_functionality`: (TODO) true or false for each method, whether to use built-in support for annotations or not. If true, will override other annotation methods such as fgwas.
 
 ## `ld.config` (TODO)
 If you specified `misc_config$ref_panel="my_ld"`, use `config.ld` to specify your pre-computed LD files:
