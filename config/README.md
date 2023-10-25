@@ -52,10 +52,9 @@ Specify which reference panel to use, which fine-mapping methods to run, MAF/MAC
   + `sample_id_field`: name of the sample ID column.
   + `sample_ancestry_field`: name of the sample ancestry column.
 
-## `fm.config`
+## `jobs.config`
 Specify which fine-mapping methods to run, what p-value thresholds to use for them, and if they should use built-in annotation-incorportation functionality if any.
-+ `methods`: which fine-mapping methods to generate outputs for.
-+ `pval_thresholds`: p-value threshold for each method. Some fine-mapping methods don't handle large amounts of variants well so this may be helpful. (TODO: list which methods this is/isn't recommended for.)
++ `p_thresh`: p-value threshold for each method. Some fine-mapping methods don't handle large amounts of variants well so this may be helpful. (TODO: list which methods this is/isn't recommended for.)
 + `use_anno_functionality`: (TODO) true or false for each method, whether to use built-in support for annotations or not. If true, will override other annotation methods such as fgwas.
 
 ## `ld.config` (TODO)
