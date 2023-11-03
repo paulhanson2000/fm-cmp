@@ -559,7 +559,7 @@ names(subset_sumstatss) <- loci_config$locus
 # TODO: ugly, but not sure what else to do?
 for(l in loci_config$locus) {
   if(all(sapply(subset_sumstatss[[l]],is.null))) {
-    message("No summary stats for locus ",l," have any variants, so removing it.")
+    message("No summary stats for locus ",l," have any variants, at least not after filtering, so removing it.")
     subset_sumstatss[[l]] <- NULL
     loci_config <- loci_config[locus!=l]
     for(i in 1:length(loci_configs)) {
@@ -570,8 +570,81 @@ for(l in loci_config$locus) {
 ```
 
 
-# LD
-Calculate LD per ancestry per locus.
+# LD, and Prepare Fine-Mapping Inputs
+Calculate LD per ancestry per locus. And, while the LD is still in memory, write it in several different formats for the various fine-mapping methods.
+```{r}
+#| label: fm-input-aux-fxns
+#| include: false
+jobs_config <- fix_yaml(yaml::read_yaml("config/jobs.config"))
+writeInputs <- function(jobs_config, locus, lds, subset_sumstats, all_loci_names) {
+  sapply(names(jobs_config), function(method) {
+    if(method=="paintor") writeInputsPaintor(<ARGS>)
+    if(method=="susiex") writeInputsSusiex(<ARGS>)
+  })
+}
+
+writeInputsPaintor <- function(locus_name, lds, subset_sumstats, p_thresh=1, all_loci_names) {
+  in_dir <- paste0("in/",config_hash,"/paintor/")
+  if(!dir.exists(in_dir)) dir.create(in_dir, recursive=T)
+  # PAINTOR takes all loci at once, and requires that for each locus, each population have the same variants (rows) in the same order.
+  # Thus if any variants are not shared between the ancestries, they unfortunately must be dropped.
+
+  # input.files
+  writeLines(all_loci_names, "input.files") # TODO: think about: right now all_loci_names is unique(loci_config$locus), but could specify in jobs.config to run on only a subset of the loci?
+
+  # Locus files format:
+  # rsid  pop1_z  pop2_z ...
+  #  rs1   -3.14  -1.337
+  #  ... <no NAs allowed>
+  id_union <- Reduce(union, sapply(subset_sumstat,'[', i=p<p_thresh, j=rs_id))
+  locus_file <- data.table(id_union)
+  aligned_sumstats <- lapply(subset_sumstats, function(s) {
+    s <- s[rs_id %in% id_union]
+    s <- s[order(rs_id)]
+    locus_file <<- cbind(locus_file, s$z)
+  }) 
+  fwrite(locus_file, locus_name) # TODO: write in a directory named by pval, since PAINTOR restricts the file name choice?
+  stopifnot(length(unique(lapply(aligned_sumstats,'[',j=rs_id)))==1) # Sanity check: all rs_id columns are identical
+  
+  # Annotation files format:
+  # annot1  annot2 ...
+  # 0 or 1  0 or 1 
+  # Rows ordered corresponding to locus file.
+  TODO
+
+  # LD format: Pearson r, space-delim'd, no header,no NAs, not compressed, rows ordered corresponding to locus file.
+  lapply(lds, function(ld)) {
+    inds <- which(colnames(ld) %in% id_unoin)
+    fwrite(ld[inds,inds], TODO)
+  }
+
+
+
+  # TODO: Possible best_annos from fgwas
+}
+
+writeInputsSusiex <- function(locus_name, lds, subset_sumstats) {
+  in_dir <- paste0("in/",config_hash,"/susiex/")
+  if(!dir.exists(in_dir)) dir.create(in_dir, recursive=T)
+  # Sumstat format: Requires chromosome, position, id, other allele, effect allele, effect size (must be named "BETA"), standard error, and p-value columns.
+    # No need to make sure the variants are shared and ordered the same among all files, SuSiEx takes care of that for you using the IDs. # TODO: take a closer look at susiex's code to confirm
+  # LD format: PLINK binary LD format https://github.com/getian107/SuSiEx/issues/7
+
+
+  # Sumstats
+  mapply(subset_sumstats, names(subset_sumstats), FUN=function(s, nm) {
+    stopifnot(all(c("chr","pos","rs_id","a0","a1","b","se","p") %in% colnames(s))) # Just a sanity check; this should have been accounted for during input validation.
+    s <- s[, .(chr,pos,rs_id,a0,a1,b,se,p)]
+    setnames(s, old="b", new="BETA")
+    fwrite(s, paste0(in_dir,locus_name,"-",nm), sep='\t')
+  })
+
+  # LD
+  # TODO: Must develop a way to convert pre-computed LD from snpgdsLDMat output to PLINK binary LD format, or else can't use TOPMed LD...
+    # Maybe daily note 230605 is still helpful?
+}
+```
+
 ```{r}
 #| label: ld
 #| cache: false
@@ -580,22 +653,24 @@ if(!dir.exists(paste0(misc_config$scratch_dir,"/ld"))) dir.create(paste0(misc_co
 seqResetFilter(ref)
 seqSetFilter(ref, variant.sel= seqGetData(ref,"annotation/id") %ni% c(NA,"") & !duplicated(seqGetData(ref,"annotation/id")))
 
-lds <- sapply(loci_config$locus,     simplify=F, function(l) {
-sapply(unique(data_config$ancestry), simplify=F, function(anc) {
+sapply(loci_config$locus,       simplify=F, function(l)   {
+
+  # For each locus ^, calculate an LD matrix for each ancestry. 
+  lds <- sapply(unique(data_config$ancestry), simplify=F, function(anc) {
     samples_of_an_ancestry <- samples_of_each_ancestry[[anc]]
     sumstats_of_an_ancestry <- subset_sumstatss[[l]][which(data_config$ancestry == anc)]
     common_rs_ids_in_sumstats_of_an_ancestry <- Reduce(union, lapply(sumstats_of_an_ancestry, '[', j=rs_id))
-
+  
     outfile_name <- paste0(misc_config$scratch_dir,"ld/",l,"-",anc,"-",length(common_rs_ids_in_sumstats_of_an_ancestry),".ld.gz")
     if(file.exists(outfile_name)) return(as.matrix(fread(outfile_name)))
-
+  
     # TODO: not generalizable if multiple datasets in an ancestry with different rsIDs and/or different effect alleles.
       # Simple solution would be in data pre-proc: just flip alleles & β & z & etc..
       # For now w/ just the DIAMANTE data w/ one dataset per ancestry it's fine. Even the different ancestries have matching a0/a1, I checked.
     a_sumstat_of_an_ancestry <- sumstats_of_an_ancestry[[1]][rs_id %in% common_rs_ids_in_sumstats_of_an_ancestry]
     #print(paste(identical(a_sumstat_of_an_ancestry$rs_id, common_rs_ids_in_sumstats_of_an_ancestry)))
     ref_alleles <- a_sumstat_of_an_ancestry$a0
-
+  
     ld <- ldCalc(ref, 
                  sample_ids = samples_of_an_ancestry,
                  variant_ids = common_rs_ids_in_sumstats_of_an_ancestry,
@@ -604,7 +679,7 @@ sapply(unique(data_config$ancestry), simplify=F, function(anc) {
     ld[is.na(ld)] <- 0
     ld <- round(ld, 5) # Save some disk space. (Actually more space-efficient than binary format below 12 digits! Default precision of R's 64b numeric is ~16 digits.)
     # It is okay to reduce the LD's precision because we are using the correlation of dosages LD approximation -- a lot of the precision is "fake" anyways.
-
+  
     fwrite(ld, outfile_name, sep=' ', na="NA", compress="gzip")
     # TODO: check if imputing NAs is a big deal or not. If not sure, test how it affects the results vs. just rm'ing whole row.
       # If imputing to 0s is bad, then if NAs in a row/col, keep only the variant w/ the best p-val in meta_sumstat.
@@ -612,31 +687,22 @@ sapply(unique(data_config$ancestry), simplify=F, function(anc) {
         # mapply(basename(data_config$filepath), data_config$ancestry, SIMPLIFY=F, FUN = function(f,a) {
         # subset_sumstatss[[l]][[f]][ rs_id %in% colnames(ldss[[l]][[a]]) ] })
     ld
-})})
+  })
+
+  # TODO:
+  all_loci_names <- unique(loci_config$locus)
+  writeInputPaintor(locus, lds, subset_sumstatss)
+  #writeInputSusiex
+
+  return NULL
+})
 ```
 
 
 # Run Fine-Mapping Methods
 ## SuSiEx
-SuSiEx is a command-line python program. It expects the following:\
-A summary stats file, as follows:\ 
-TODO: make nice table\
-The β column _must_ be named "BETA" or "OR", but besides that they may be named arbitrarily.
 ```{r eval=F}
 if("susiex" %in% misc_config$fm_methods) {
-
-# Prep input
-if(!dir.exists("in/susiex")) dir.create("in/susiex", recursive=T)
-# TODO: ensure data contains the required columns
-lapply(loci_config$locus, function(l) {
-mapply(subset_sumstatss[[l]], names(sumstats), FUN=function(s, nm) {
-  s <- s[, .(chr,pos,rs_id,a0,a1,b,se,p)]
-  setnames(s, old="b", new="BETA", skip_absent=T)
-  fwrite(s, paste0("in/susiex/",l,"-",nm), sep='\t')
-})})
-
-# TODO: PLINK stuff
-  # NOTE TO SELF: see daily note 230605. Letting SuSiEx recompute its own LD for now just to get things working.
 
 
 # Run
@@ -679,19 +745,8 @@ err <- lapply(1:nrow(loci_config), function(r) {
 PAINTOR only works on variants shared by ALL input datasets.\
 TODO: desc
 ```{r eval=F}
-if(!dir.exists("in/paintor")) dir.create("in/paintor")
 # input.files
 writeLines(unique(loci_config$locus), "in/paintor/input.files")
-
-# Locus files. Format:
-# rsid  pop1_z  pop2_z ...
-#  rs1   -3.14  -1.337
-#  ... <no NAs allowed>
-
-# Annotation files. Format:
-# annot1  annot2 ...
-# 0 or 1  0 or 1 
-# Must have same number of rows and order as locus file.
 
 desired_rs_idss <- sapply(loci_config$locus, simplify=F, function(l) {
   signif_rs_ids <- Reduce(union,     lapply(subset_sumstatss[[l]], '[', j=rs_id)) # NOTE: optional hardcoded p threshold here
