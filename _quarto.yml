@@ -2,4 +2,7 @@ project:
   output-dir: quarto_output
 toc: true
 number-sections: true
-format: html
+format:
+  html:
+    code-fold: show
+    code-tools: true

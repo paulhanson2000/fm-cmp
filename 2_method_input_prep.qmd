@@ -1,0 +1,19 @@
+---
+title: Per-Method Input Prep
+---
+
+Load all sumstats (as an RDS I guess would be easiest? Or no, becuase less reusable/general
+Load each Locus's LD (a mtx per ancestry)
+
+Do Input prep for each of them, and output
+
+```{r}
+fix_yaml <- function(a) {if(is.list(a)) sapply(a, function(a2) lapply(a2, fix_yaml)) else a}
+misc_config <- fix_yaml(yaml::read_yaml("config/misc.config"))
+data_config <- fread("config/data.config")
+```
+
+
+```{r}
+
+```

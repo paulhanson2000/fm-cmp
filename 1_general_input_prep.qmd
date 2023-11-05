@@ -1,9 +1,5 @@
 ---
-format:
-  html:
-    code-fold: show
-    code-tools: true
-toc: true
+title: General Input Prep
 ---
 
 # Libraries & Functions
@@ -340,9 +336,10 @@ if(!any(grepl("^rs", ref_panel_ids))) { # TODO: Actually can skip this if ref pa
 
   # Much faster to download the dbSNP file and access it locally. TODO: maybe if ~<500 variants, just use URL
   dbsnp_vcf <- {
-    if      (misc_config$ref_panel_ref_genome == "hg19") "GCF_000001405.25.gz"
-    else if (misc_config$ref_panel_ref_genome == "hg38") "GCF_000001405.40.gz"
-    else stop("TODO")
+    if(!dir.exists("data/dbsnp/")) dir.create("data/dbsnp")
+    if      (misc_config$ref_panel_ref_genome == "hg19") "data/dbsnp/GCF_000001405.25.gz"
+    else if (misc_config$ref_panel_ref_genome == "hg38") "data/dbsnp/GCF_000001405.40.gz"
+    else stop("unsupported human genome version for dbsnp")
   }
   if(!file.exists(dbsnp_vcf)) {
     message("Downloading dbSNP file locally for faster access.") # TODO: better message

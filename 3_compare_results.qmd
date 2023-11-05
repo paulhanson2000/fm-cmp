@@ -1,6 +1,5 @@
 ---
-format: html
-toc: true
+title: Compare Fine-Mapping Methods' Results
 ---
 
 # Lib

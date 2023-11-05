@@ -4,8 +4,8 @@ Linux only.
 git clone https://github.com/paulhanson2000/fm-cmp.git
 cd fm-cmp
 
-# If you're on a compute cluster using LMod, run this each time. Tested on Compute Canada & BU SCC.
-# Otherwise, on your personal computer make sure you have the dependencies.
+# On compute clusters using LMod, run this each time. Tested on Compute Canada & BU SCC.
+# On a personal computer, make sure you have the dependencies.
 source init/get_lmod_modules.sh
 
 # Need only run once
@@ -13,14 +13,14 @@ init/get_data.sh
 init/get_tools.sh
 Rscript init/get_r_pkgs.R
 
-# Run pipeline (need Quarto, get it from quarto.org)
+# Run (need Quarto, get it from quarto.org)
 quarto render
 
 # View the results as an html file on your web browser.
 # (Readbean is a convenient http server that can run on any OS: https://redbean.dev)
 curl https://redbean.dev/redbean-original-2.2.com > redbean.com
-chmod -R 777 redbean.com compare_outputs*
-./redbean.com -D . -w quarto_output/compare_outputs.html -l 127.0.0.1
+chmod -R 777 redbean.com compare_results*
+./redbean.com -D . -w quarto_output/3_compare_results.html -l 127.0.0.1
 ```
 To use this pipeline on your own data, see `config/README.md`.
 
