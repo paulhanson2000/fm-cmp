@@ -1,0 +1,45 @@
+---
+---
+
+```{r}
+library(refpanelutil)
+library(data.table)
+
+"%ni%" <- Negate("%in%")
+
+loci_config <- fread("../out/liftover/config.loci.hg38") 
+chr_nm_map <- fread("../config/ucsc_chr_names_map.txt")
+dbsnp_vcf <- "../data/dbsnp/GCF_000001405.40.gz"
+```
+
+```{r}
+bcftools_cmd <- bcftoolsPipableCmd(
+  files = dbsnp_vcf,
+  regions = data.table(loci_config$chr, loci_config$pos_min, loci_config$pos_max),
+  query = "%ID\t%CHROM\t%POS\t%REF\t%ALT\n",
+  chr_nm_map = chr_nm_map,
+  scratch_dir = "/tmp")
+```
+
+```{r}
+dbsnp <- fread(cmd = bcftools_cmd, col.names=c("rs_id", "chr", "pos", "ref", "alt"))
+```
+
+```{r}
+sum(duplicated(dbsnp$rs_id)) # There are no duplicated rsIDs.
+tmp <- dbsnp[
+    dbsnp, on=.(chr,pos)
+  ][
+    !mapply(i.rs_id,i.ref,i.alt, rs_id,ref,alt, FUN = function(iid,ir,ia, id,r,a) {
+      iid==id && ir==r && ia==a
+    }) # Keeps only rows which are not just the same row joined to itself. Remaining rows were joins where genomic coords were the same but s/t else is different.
+  ][
+    mapply(i.ref,i.alt, ref,alt, FUN = function(ir,ia, r,a) {
+      ia <- strsplit(ia,',')[[1]]
+       a <- strsplit( a,',')[[1]]
+      x <- c(ir,ia)
+      y <- c( r, a)
+      all(x %in% y) || all(y %in% x) # If either's alleles are a subset or match of the other, and yet they have the same rs_id, that's strange because they should be the same (or should be merged into the same) variant.
+    })
+]
+```
