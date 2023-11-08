@@ -261,7 +261,7 @@ sumstats <- lapply(1:nrow(data_config), function(r) {
              pos >= loci$pos_min[i] &
              pos <= loci$pos_max[i] ][, locus := loci$locus[i]]
   }))
-  if("eaf" %in% names(sumstat)) sumstat <- sumstat[eaf > 0 & eaf < 1]
+  if("eaf" %in% names(sumstat)) sumstat <- sumstat[eaf > misc_config$eaf_thresh & eaf < 1-misc_config$eaf_thresh]
 
   sumstat[,`:=`(a0=toupper(a0), a1=toupper(a1))]
 
