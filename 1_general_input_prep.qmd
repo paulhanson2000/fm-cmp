@@ -421,7 +421,7 @@ seqResetFilter(ref, variant=F)
 
 invisible(sapply(data_config$ancestry, function(anc) if(anc %ni% names(ancestries_maf_mac_miss)) { print(paste("ERROR: Ancestry",anc,"mentioned in config.data is not an ancestry in the reference panel:", paste(collapse=", ", names(ancestries_maf_mac_miss)), "\nPlease remove this dataset from config.data, or if this was just a typo, change the ancestry name to match one of those in the reference panel.")); stop() })) # TODO: this belongs earlier, when loading in the data. But a nice sanity check to have for now.
 
-sumstats <- mapply(sumstats, data_config$ancestry, SIMPLIFY=F, FUN = function(s, anc) {
+sumstats <- mapply(sumstats, names(sumstats), data_config$ancestry, SIMPLIFY=F, FUN = function(s, s_nm, anc) {
   ancestry_maf_mac_miss <- ancestries_maf_mac_miss[[anc]]
 
   seqResetFilter(ref)
@@ -437,6 +437,9 @@ sumstats <- mapply(sumstats, data_config$ancestry, SIMPLIFY=F, FUN = function(s,
     if(!is.null(misc_config$missingness_threshold)) variants2keep <- variants2keep & ancestry_maf_mac_miss$miss < misc_config$missingness_threshold
   }
   # TODO: multiallelic filter using seqNumAllele()?
+
+  unshared <- s$rs_id %ni% seqGetData(ref, "annotation/id") # Done *before* filtering by mac/maf/miss, or else n_unshared would unfairly count variants dropped for other reasons. I.e. dropping due to bad mac/maf/miss is acceptable, but dropping lots of variants because unshared is more suspicious.
+  message( sum(unshared),"/",nrow(s)," variants in ", s_nm, " will be omitted because they were not shared with the reference panel. Best p-values omitted: ", paste(head(sort(s[unshared,p]),n=5)) )
 
   seqSetFilter(ref, action = "push+intersect", variant.sel = variants2keep)
 
