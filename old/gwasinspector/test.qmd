@@ -1,0 +1,60 @@
+---
+---
+
+# Setup
+```{r}
+library(GWASinspector)
+system_check()
+#get_config(".")
+#get_headerTranslation(".")
+
+# Config options changed:
+#   filename = gnomad_sumstats.gz
+#   dir_data = .
+#   dir_output = ./out
+#   dir_references = .
+#   header_translations = TODOTODOTODO
+#   allele_ref_std = HapMap_CEU_r28_c36_EDIT_v10c_v5-renamed.sqlite 
+#   allele_ref_std_population = COMMON
+#   save_final_dataset = TRUE
+#   gzip_final_dataset = TRUE
+#   html_report = FALSE
+#   add_column_rsid = TRUE
+#   make_plots = FALSE
+#   HQfilter_FRQ = 0.005
+
+# Note: must unzip the SQLite after download w/ gzip -d
+
+# (Header translation table unchanged)
+```
+
+# Modify gnomAD VCF
+Not shown: use main pipeline to load gnomAD from AWS, outputted to "tmp.gds" in this dir.
+```{r}
+# Don't need to run more that once
+#library(SeqArray)
+#ref <- seqOpen("tmp.gds")
+#head(seqGetData(ref,"annotation/id"))
+#seqGDS2VCF(ref, "tmp.vcf.gz")
+#seqClose(ref); rm(ref)
+```
+
+GWASinspector is meant to be used on summary stats, not reference panels, so have to format this like sumstats and add fake β & SE cols.
+```{r}
+# Don't need to run more than once
+library(refpanelutil)
+library(data.table)
+cmd <- bcftoolsPipableCmd("tmp.vcf.gz", query="%CHROM\t%POS\t%REF\t%ALT\n")
+s <- fread(cmd=cmd, col.names=c("CHR","POS","A1","A2"))
+s[, `:=`(CHR=sub("chr","",CHR), B=2, SE=0.01)]
+s_smol <- s[1:5000]
+#fwrite(s,      "gnomad_sumstats.gz",      sep=' ')
+fwrite(s_smol, "gnomad_sumstats.gz", sep=' ')
+```
+
+```{r}
+job <- setup_inspector("./config.ini")
+job
+job <- run_inspector(job)
+result_inspector(job)
+```
