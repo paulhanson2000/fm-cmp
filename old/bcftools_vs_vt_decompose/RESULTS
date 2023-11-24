@@ -1,0 +1,28 @@
+- Sample S1 has alleles TAA/TAAA and S2 TA/TA.
+  - NOTE: I suppose S2 could also technically be considered to be T/T if you think about it,
+    but in the context of this being an indel, is that still actually correct?... it's confusing.
+
+
+- "bcftools norm -a" and "bcftools norm -a --atom-overlaps '*'" are equivalent.
+  - I think I will avoid this (for now) because "*"s are a pain to deal with.
+    That's not a good attitude though, I may have to come back to this to make the pipeline truly general for indels and all.
+  - But... I think bcftools is incorrect anyway, right?
+    S2 was TA/TA but it changed to T/T in row 1.
+    Yeah, compare S2's GT in row 1 & 3, they are contradictory!! Am I seeing this correctly?
+
+- "bcftools norm -m" (plus "-any", or whatever) seems bad for the same reason as mentioned here: https://stackoverflow.com/q/73611363
+  - I.e., there are "0"s (ref allele) are used to fill in the missing spaces after decomp indiscriminately. It should be "." or "*".
+  - This problem can be alleviated by adding "--multi-overlaps ."... or can it?
+    - The output seems wrong. Look at a-bcftools_m_dot.vcf. Shouldn't S2's GT be 0/0 for the 2nd and 3rd rows too?
+      I mean, it's technically not _incorrect_, but setting missing values where we _did_ have enough info to fill them in.
+
+- "bcftools norm -a --atom-overlaps ."
+  - Again S2's GT is wrong, see row 1 & 2 claiming S2's GT is T/T when it was TA/TA in the OG file.
+
+
+
+IN CONCLUSION:
+- None of this actually matters to me (yet) b/c there are only biallelics in the DIAMANTE data.
+  dbSNP is the only one with multiallelics in my case, and these decomposition errors(?) don't affect rsIDs.
+  However, was good to look into this to know what is correct.
+- "vt decompose -s" is the ONLY correct one?!

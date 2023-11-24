@@ -1,0 +1,6 @@
+Comparing how thorough bcftools's and vt's decomposition of multiallelics is.
+I saw most people using "vt decompose -s" instead of bcftools norm (https://stackoverflow.com/q/73611363, https://annovar.openbioinformatics.org/en/latest/articles/VCF/, https://github.com/tecnickcom/variantkey), but I wonder if bcftools has since improved.
+It would be more convenient if I could just use bcftools, because then I could do all steps at once in bcftoolsPipableCmd(), and avoid a dependency (although I have no problems with vt other than it being another thing the user'd have to downloadd).
+
+The example a.vcf comes from https://github.com/tecnickcom/variantkey
+The example b.vcf comes from https://stackoverflow.com/q/73611363

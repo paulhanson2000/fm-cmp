@@ -1,0 +1,13 @@
+##fileformat=VCFv4.2
+##FILTER=<ID=PASS,Description="All filters passed">
+##contig=<ID=1>
+##INFO=<ID=AF,Number=A,Type=Float,Description="Allele Frequency">
+##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Read Depth">
+##FORMAT=<ID=PL,Number=G,Type=Integer,Description="Normalized, phred-scaled likelihoods for genotypes">
+##bcftools_normVersion=1.17+htslib-1.17
+##bcftools_normCommand=norm -m-any -o a-bcftools_m.vcf a.vcf; Date=Fri Nov 24 13:17:07 2023
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	S1	S2
+1	3759889	.	TA	TAA	.	PASS	AF=0.342	GT:DP:PL	1/0:81:281,5,9	0/0:86:0,30,323
+1	3759889	.	TA	TAAA	.	PASS	AF=0.173	GT:DP:PL	0/1:81:281,58,115	0/0:86:0,31,483
+1	3759889	.	TA	T	.	PASS	AF=0.037	GT:DP:PL	0/0:81:281,338,809	0/0:86:0,38,567

@@ -1,0 +1,8 @@
+##fileformat=VCFv4.2
+##contig=<ID=1>
+##INFO=<ID=AF,Number=A,Type=Float,Description="Allele Frequency">
+##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Read Depth">
+##FORMAT=<ID=PL,Number=G,Type=Integer,Description="Normalized, phred-scaled likelihoods for genotypes">
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	S1	S2
+1	3759889	.	TA	TAA,TAAA,T	.	PASS	AF=0.342,0.173,0.037	GT:DP:PL	1/2:81:281,5,9,58,0,115,338,46,116,809	0/0:86:0,30,323,31,365,483,38,291,325,567

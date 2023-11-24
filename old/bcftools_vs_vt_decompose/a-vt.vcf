@@ -1,0 +1,12 @@
+##fileformat=VCFv4.2
+##FILTER=<ID=PASS,Description="All filters passed">
+##contig=<ID=1>
+##INFO=<ID=AF,Number=A,Type=Float,Description="Allele Frequency">
+##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Read Depth">
+##FORMAT=<ID=PL,Number=G,Type=Integer,Description="Normalized, phred-scaled likelihoods for genotypes">
+##INFO=<ID=OLD_MULTIALLELIC,Number=1,Type=String,Description="Original chr:pos:ref:alt encoding">
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	S1	S2
+1	3759889	.	TA	TAA	.	PASS	AF=0.342;OLD_MULTIALLELIC=1:3759889:TA/TAA/TAAA/T	GT:DP:PL	1/.:81:281,5,9	0/0:86:0,30,323
+1	3759889	.	TA	TAAA	.	PASS	AF=0.173;OLD_MULTIALLELIC=1:3759889:TA/TAA/TAAA/T	GT:DP:PL	./1:81:281,58,115	0/0:86:0,31,483
+1	3759889	.	TA	T	.	PASS	AF=0.037;OLD_MULTIALLELIC=1:3759889:TA/TAA/TAAA/T	GT:DP:PL	./.:81:281,338,809	0/0:86:0,38,567
