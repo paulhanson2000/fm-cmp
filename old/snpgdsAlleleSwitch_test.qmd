@@ -1,0 +1,49 @@
+---
+---
+
+```{r}
+library(SeqArray)
+library(SNPRelate)
+"%ni%" <- Negate("%in%")
+```
+
+```{r}
+# Mostly copying example from ?snpgdsAlleleSwitch
+file.copy(snpgdsExampleFileName(), "test.gds", overwrite=T)
+gds <- snpgdsOpen("test.gds", readonly=F)
+allele <- read.gdsn(index.gdsn(gds,"snp.allele"))
+allele_list <- strsplit(allele,'/')
+
+A.allele <- sapply(allele_list,'[',1)
+B.allele <- sapply(allele_list,'[',2)
+
+# Flip 50 random alleles
+set.seed(1)
+flip_inds <- rep(F,length(A.allele))
+flip_inds[sample.int(length(A.allele), 50, replace=T)] <- T
+A.allele[flip_inds] <- B.allele[flip_inds]
+# Add 10 NAs
+A.allele[sample.int(length(A.allele), 10, replace=T)] <- NA
+# Flip a strand
+A.allele[1];        B.allele[1]; flip_inds[1] # G,T,FALSE
+A.allele[1] <- "A"
+table(A.allele, exclude=F)
+
+z <- snpgdsAlleleSwitch(gds, A.allele)
+table(z, exclude=NULL) # z would be identical to flip_inds if not for the NAs
+
+snpgdsClose(gds)
+unlink("test.gds",force=T)
+
+# In conclusion, snpgdsAlleleSwitch's source code calls it "strand switching", but it really only does allele flipping.
+# That is fine, it's probably better to assume the GDS file strictly positive strand. This seems to be the standard even though not explicitly mentioned in the VCF spec.
+# If a user has a STRAND field in INFO or s/t, then it will be their responsibility to harmonize e/t to be on the forward strand I guess.
+```
+
+```{r}
+gds <- seqOpen("../scratch/df563ea9aa35ac92280f38008c483225.gds")
+table(seqNumAllele(gds)) # Seems like gnomad has no multiallelics (at least taking my subset of loci for DIAMANTE)
+seqClose(gds)
+
+# TODO:
+```
