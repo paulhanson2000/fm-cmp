@@ -1,0 +1,141 @@
+---
+title: "Simulating GWAS data, a walkthrough"
+author: "Chris Wallace"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Simulating GWAS data, a walkthrough}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+Load the library
+
+```{r}
+library(simGWAS)
+```
+
+simGWAS needs some reference haplotype frequencies from control subjcets.  These can be found by taking phased haplotypes from public data sources, or by phasing genotype data you may already have, for example using [snphap](https://github.com/chr1swallace/snphap).
+
+For the purpose of this vignette, we will simulate some reference haplotypes.  The final format is a `data.frame` with n columns of 0s and 1s indicating alleles at each of n SNPs, and collections of alleles in a row being a haplotype.  A final column, named "Probability", contains the fractional frequency of each haplotype.  Note that haplotypes need not be unique, you can have one row per haplotype in a sample, and Probability set to 1/[number of haplotypes] = 1/(2*[number of samples]).  The object we are creating will be called `freq`.
+
+```{r}
+#data(simGWAS_test_data) # loads a matrix of haplotypes
+#dim(haps)
+#
+### name the columns of haps, and store these as snp names
+#set.seed(42)
+#nsnps=ncol(haps)
+#snps <- colnames(haps) <- paste0("s",1:nsnps)
+#
+### calculate MAF
+#maf <- colMeans(haps)
+#
+### simGWAS wants this in a data.frame, with an extra column giving frequency of each haplotype
+#freq <- as.data.frame(haps+1)
+#freq$Probability <- 1/nrow(freq)
+
+# Generate data from scratch as in the 2018 version of the vignette
+set.seed(42)
+nsnps <- 100
+nhaps <- 1000
+lag <- 5 # genotypes are correlated between neighbouring variants
+maf <- runif(nsnps+lag,0.05,0.5) # common SNPs
+laghaps <- do.call("cbind", lapply(maf, function(f) rbinom(nhaps,1,f)))
+haps <- laghaps[,1:nsnps]
+for(j in 1:lag) 
+    haps <- haps + laghaps[,(1:nsnps)+j]
+haps <- round(haps/matrix(apply(haps,2,max),nhaps,nsnps,byrow=TRUE))
+
+snps <- colnames(haps) <- paste0("s",1:nsnps)
+freq <- as.data.frame(haps+1)
+freq$Probability <- 1/nrow(freq)
+sum(freq$Probability)
+```
+
+Next, we need to specify the causal variants, and their effects on disease, as odds ratios.  We create a vector `CV` with snp names that are a subset of column names in `freq` and a vector of odds ratios.  In our simulated data, we pick two causal variants at random, with odds ratios of 1.4 and 1.2.
+
+```{r}
+CV=sample(snps[which(maf>0.1)],2) # snp names of causal variants
+g1 <- c(1.4,1.2) # odds ratios (not on log scale!)
+```
+
+Now we simulate the results of a GWAS.  There are two key functions, `makeGenoProbList` calculates genotype probabilities at each SNP conditional on genotypes at the causal variants, then `est_statistic` generates the vector of Z scores across all SNPs, conditional on the causal variants *and* their odds ratios.
+
+```{r}
+FP <- make_GenoProbList(snps=snps,W=CV,freq=freq)
+zexp <- expected_z_score(N0=10000, # number of controls
+              N1=10000, # number of cases
+              snps=snps, # column names in freq of SNPs for which Z scores should be generated
+              W=CV, # causal variants, subset of snps
+              gamma.W=log(g1), # log odds ratios
+              freq=freq, # reference haplotypes
+              GenoProbList=FP) # FP above
+```
+
+Ignoring spacing, this would produce results like, with red lines indicating where the causal variants are.
+
+```{r}
+plot(1:nsnps,zexp); abline(v=which(snps %in% CV),col="red"); abline(h=0)
+```
+
+True GWAS statistics will vary about this expected value, and may be simulated by (one row per realisation)
+
+```{r}
+zsim <- simulated_z_score(N0=10000, # number of controls
+              N1=10000, # number of cases
+              snps=snps, # column names in freq of SNPs for which Z scores should be generated
+              W=CV, # causal variants, subset of snps
+              gamma.W=log(g1), # log odds ratios
+              freq=freq, # reference haplotypes
+          nrep=3)
+```
+
+To see how these vary about the expected, we can overplot the two:
+
+```{r, fig.height = 6}
+op <- par(mfcol=c(3,1))
+for(i in 1:3) {
+  plot(1:nsnps,zexp,xlab="SNP",ylab="Z score"); abline(v=which(snps %in% CV),col="red"); abline(h=0)
+  title(main=paste("Replication",i))
+  points(1:nsnps,zsim[i,],col="blue",pch=2)
+} 
+par(op)
+```
+
+If we need log odds ratios and standard errors, rather than simply Z scores, we may simulate variance(beta) by:
+
+```{r}
+ vbetasim <- simulated_vbeta(N0=10000, # number of controls
+              N1=10000, # number of cases
+              snps=snps, # column names in freq of SNPs for which Z scores should be generated
+              W=CV, # causal variants, subset of snps
+              gamma.W=log(g1), # log odds ratios
+              freq=freq, # reference haplotypes
+          nrep=3)
+  betasim <- zsim * sqrt(vbetasim)
+```
+
+The simulated odds ratios should be distributed about g1:
+```{r}
+CV
+log(g1)
+betasim[,c(which(snps==CV[1]),which(snps==CV[2]))]
+```
+
+
+Again, these can be plotted, to see the variability between replicates:
+```{r}
+plot(1:nsnps,betasim[1,],
+     xlab="SNP",ylab="Beta (log OR)",
+     ylim=c(min(betasim),max(betasim)))
+abline(v=which(snps %in% CV),col="red"); abline(h=0)
+for(i in 2:3) {
+  points(1:nsnps,betasim[i,],col=i,pch=i)
+} 
+  
+```
+
+## See also
+
+Examples of using simGWAS with reference data from the 1000 Genomes project to simulate single regions or whole chromosomes can be found at https://github.com/chr1swallace/simgwas-paper.  In particular see https://github.com/chr1swallace/simgwas-paper/blob/master/runsims-1kg.R for single region, and https://github.com/chr1swallace/simgwas-paper/blob/master/run-chr.R for a whole chromosome.

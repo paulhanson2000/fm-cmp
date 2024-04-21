@@ -1,0 +1,23 @@
+# --- FILES ---
+`intro.qmd`: The original simGWAS vignette edited to render with quarto.
+`filter_1kg_mac40.R`: See below. Takes the 1kG .hap files from the IMPUTE2 website and filters them down to variants with MAC > 40 in at least one ancestry.
+`avg_ld.R`: Used to explore variant LD in diffrent ancestries, to pick good example variants for fine-mapping.
+`pooled_group_simgwas_finemap.qmd`: Pooled-sample simulation, and fine-mapping one replication at a time.
+`multi_group_simgwas_finemap.qmd`: ^, except multi-ancestry, and everything is put in a loop to run multiple replications easily.
+
+
+# --- HOW TO USE: ---
+Generate the data/ folder (1kG .hap files filtered by MAC > 40 in at least one ancestry):
+```{bash}
+curl -LO https://mathgen.stats.ox.ac.uk/impute/1000GP_Phase3.tgz # IMPUTE2 website
+# Wait 3000 years
+tar zxf 1000GP_Phase3
+Rscript filter_1kg_mac40.R
+# filter_1kg_mac40.R subsets the big files to save memory, keeping only variants with MAC>40.
+  # (These subset files are put in a new data/ folder, so the original 1000GP_Phase3/ folder remains untouched.)
+```
+
+Download plink1.9 and plink2 manually
+Use pick_CVs.R to pick out variants (ideally with low/high LD in one ancestry vs. another to test multi-ancestry fine-mapping)
+Use pooled_ or multi_group_simgwas_finemap.qmd to simulate data and run fine-mapping on it!
+The multi_... script inludes code to plot comparisons between PAINTOR & SuSiEx.

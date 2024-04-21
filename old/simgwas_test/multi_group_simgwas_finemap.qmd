@@ -1,0 +1,505 @@
+---
+---
+
+```{r,lib}
+library(data.table)
+library(ggplot2)
+library(matrixStats) # colSds
+library(simGWAS)
+```
+```{r,dirs}
+dir.create("in/paintor", recursive=T)
+dir.create("out/paintor",recursive=T)
+dir.create("in/susiex",  recursive=T)
+dir.create("out/susiex", recursive=T)
+```
+
+# Read 1kG data
+```{r,read}
+ref_hap <- fread("data/chr22_mac_gt40.hap.gz")
+ref_leg <- fread("data/chr22_mac_gt40.leg.gz")
+ref_samp <- fread("data/1000GP_Phase3.sample")
+```
+
+# Select random CV
+```{r,cv}
+#cvs <- data.table(id = "rs12169200:27638781:A:G")    #    0.059    0.063   0.32   0.32
+#cvs <- data.table(id = "rs3076533:48883825:AGTGT:A") #    0.094    0.095   0.70   0.71
+#cvs <- data.table(id = "rs5755304:35201115:T:C")     #    0.51     0.53    0.66   0.61
+#cvs <- data.table(id = "rs3076533:48883825:AGTGT:A") #    0.094    0.095   0.70   0.71
+cvs <- data.table(id = "rs28625949:24655227:G:A")    #    0.13     0.56   0.35   0.35
+#cvs <- data.table(id = "rs9608946:30892255:A:G")     #    0.18     0.58    0.23   0.23
+                                                      # AFRavgLD EURavgLD AFRfrq EURfrq
+cvs$or  <- c(1.1)
+cvs$pos <- ref_leg[id==cvs$id,position]
+
+# Select 1Mb region about CV
+ref_leg$do_sim <- ref_leg$position < max(cvs$pos)+500000 &
+                  ref_leg$position > min(cvs$pos)-500000
+```
+
+# Process data to simGWAS format, pre-calc GenoProbLists & LD
+```{r,precalc}
+freqs <- sapply(c("AFR","EUR"), simplify=F, function(anc) {
+  h1 <- ref_hap[, .SD, .SDcols=seq(1,ncol(ref_hap)-1,by=2)][, .SD, .SDcols=ref_samp$GROUP==anc]
+  h2 <- ref_hap[, .SD, .SDcols=seq(2,ncol(ref_hap)  ,by=2)][, .SD, .SDcols=ref_samp$GROUP==anc]
+  freq <- as.data.frame( t(cbind(h1,h2))+1 ) # Not data.table b/c simGWAS fxns use this too
+  names(freq) <- ref_leg$id
+  freq$Probability <- 1/nrow(freq)
+  freq
+})
+rm(ref_hap)
+FPs <- sapply(freqs, make_GenoProbList, snps=ref_leg[do_sim==T,id], W=cvs$id, n_thread=4, simplify=F)
+LDs <- sapply(freqs, simplify=F, function(fq) {
+  LD <- simGWAS:::wcor2(as.matrix( fq[,colnames(fq) %in% ref_leg[do_sim==T,id]] ), fq$Probability)
+  diag(LD) <- 1.0001
+  LD
+})
+# Due to negligible approximations and the efficient implementation of simGWAS's wcor2, the LD might not be positive definite
+#   (which means the Cholesky decomposition (fastest decomposition method) can not be used when simulating data).
+#   To fix this just add a small amount to the diagonal.
+```
+
+
+# Simulate!
+```{r,sim}
+sim <- function(N, prop_cases=0.2, cvs, snp_ids, freq, FP, LD, n_rep, seed=1337) {
+  if(N==0) return(NULL)
+  N0 <- (1-prop_cases)*N
+  N1 <-    prop_cases *N
+
+  set.seed(seed)
+  z_sims <- simulated_z_score(
+    N0=N0, N1=N1, # N controls, cases
+    snps=snp_ids, # column names in freq of SNPs for which Z scores should be generated
+    W=cvs$id, # CVs, subset of snps
+    gamma.W=log(cvs$or), # CVs' log(OR)s
+    freq=freq[,names(freq) %in% c(snp_ids,"Probability")], # Ref haplotypes
+    GenoProbList=FP,
+    LD=LD,
+    rmvnorm_method="chol",
+    nrep=n_rep
+  )
+  
+  set.seed(seed)
+  se_sims <- sqrt(simulated_vbeta(
+    N0=N0, N1=N1,
+    snps=snp_ids,
+    W=cvs$id,
+    gamma.W=log(cvs$or),
+    freq=freq[,names(freq) %in% c(snp_ids,"Probability")],
+    GenoProbList=FP,
+    nrep=n_rep
+  ))
+  
+  b_sims <- z_sims*se_sims
+  p_sims <- pnorm(-abs(z_sims))*2
+
+  list(z_sims=z_sims, se_sims=se_sims, b_sims=b_sims, p_sims=p_sims)
+}
+
+sims_params <- as.data.table(expand.grid( ancestry=c("AFR","EUR"), n=as.integer(c(0,1000,5000,10000,50000,90000,95000,99000,100000)) ))
+sims_params$nm <- do.call(paste, c(sims_params, sep='_'))
+
+n_rep <- 200
+simss <- mapply(sims_params$nm, sims_params$ancestry, sims_params$n,  SIMPLIFY=F, FUN=function(nm,anc,n) {
+  sim(
+    N=n, prop_cases=0.2,
+    cvs=cvs, snp_ids=ref_leg[do_sim==T,id],
+    freq=freqs[[anc]], FP=FPs[[anc]], LD=LDs[[anc]],
+    n_rep=n_rep
+)})
+# Warnings of rgamma in simGWAS::simulated_vbeta producing NAs.
+#   Guessing it's due to my relaxed MAC filtering. As long as ANY ancestry has MAC>40 for that SNP, it passes.
+#   So there could be SNPs simulated in one ancestry that have MAC==0 in the other.
+#   Don't worry though, I ensured that the ~CVs~ had MAC>40 in both ancestries.
+```
+
+# Calc LD for finemapping methods
+```{r,plink-ld}
+mapply(c("AFR","EUR"), FUN=function(anc) {
+  samp_ids <- ref_samp[GROUP==anc,ID]
+  writeLines(samp_ids, paste0("in/sample_ids-",anc,".txt")) # Make file of sample IDs for plink to --keep
+  writeLines(ref_leg[do_sim==T,id], "extract_snps.txt") # Make file of variant IDs for plink to --extract
+  system(paste("./plink2",
+    "--haps   data/chr22_mac_gt40.hap.gz",
+    "--legend data/chr22_mac_gt40.leg.gz 22",
+    "--sample data/1000GP_Phase3.sample2", # File created in avg_ld.R (TODO, messy)
+    "--keep", paste0("in/sample_ids-",anc,".txt"),
+    "--extract extract_snps.txt",
+    "--r-phased square allow-ambiguous-allele", # For PAINTOR
+    "--make-bed", # For SuSiEx
+    "--out",paste0("in/",cvs$id,"-",anc) # NOTE: will break if >1 CV
+  ))
+  system(paste0("diff extract_snps.txt in/",cvs$id,"-",anc,".phased.vcor1.vars")) # Should print n/t
+})
+```
+
+# Define fine-mapping runs
+```{r}
+szs <- unique(sims_params$n)
+runs <- CJ(n1=szs,n2=szs)[
+    n1+n2==100000
+  ][, `:=`(sim_nm1=paste0("AFR_",n1),
+           sim_nm2=paste0("EUR_",n2))
+]
+rm(szs)
+
+# Hardcoded, for plots later
+fancy_run_nms <- c("100k EUR", "1k+99k AFR+EUR", "5k+95k AFR+EUR", "10k+90k AFR+EUR", "50k+50k AFR+EUR", "90k+10k AFR+EUR", "95k+5k AFR+EUR", "99k+1k AFR+EUR", "100k AFR") # For plots later
+```
+
+# Format input for and run PAINTOR
+```{r,paintor}
+# PAINTOR can't handle NAs. Thus, only keep varaints whose Z scores were not missing in BOTH ancestries.
+#   Note if the Z score was NA, that's b/c the MAC was 0, meaning all replications and the LD will be NA for those same variants too.
+not_missing_in_any_ancestry <- intersect(which(!is.na(simss$AFR_100000$z_sims[1,])), which(!is.na(simss$EUR_100000$z_sims[1,])))
+
+#paintor_resultss <-
+  tmp <- 
+lapply(1:nrow(runs), FUN=function(run_n) { # For each pair of ancestry sample sizes
+parallel::mclapply(1:n_rep, mc.cores=4, function(rep_n) { # For each replication
+  in_dir <- "in/paintor/"
+  out_dir <- "out/paintor/"
+  fnm_base <- sprintf("%s-OR%.2f-run%02d-rep%03d",cvs$id,cvs$or,run_n,rep_n)
+
+  results_file <- paste0(out_dir,fnm_base,".results")
+  if(file.exists(results_file)) return(fread(results_file))
+
+  input.files_path <- paste0(in_dir,fnm_base,".input.files")
+  locusfile_path   <- paste0(in_dir,fnm_base)
+  annotations_path <- paste0(in_dir,fnm_base,".annotations")
+  afr_ld_path      <- paste0(in_dir,fnm_base,".LD_AFR")
+  eur_ld_path      <- paste0(in_dir,fnm_base,".LD_EUR")
+
+  # input.files
+  writeLines( paste0(fnm_base),
+    input.files_path )
+
+  # "locusfile" containg Z-scores
+  locusfile <- data.table(
+    CHR  = rep("chr22",sum(ref_leg$do_sim)),
+    POS  = ref_leg[do_sim==T,position],
+    RSID = ref_leg[do_sim==T,id]
+  )
+  # Add Z scores columns.
+  sim_nms <- unlist(runs[run_n,.(sim_nm1,sim_nm2)])
+  locusfile[, (sim_nms[1]) := simss[[sim_nms[1]]]$z_sims[rep_n,]]
+  locusfile[, (sim_nms[2]) := simss[[sim_nms[2]]]$z_sims[rep_n,]]
+
+  # PAINTOR gives erroneous results if there are too many variants. So just take the top 1000.
+  # Also, PAINTOR cannot handle NAs so remove those too.
+  top1k <- order( do.call(function(...) -pmax(...,na.rm=T), abs(locusfile[,4:ncol(locusfile)])) )[1:1000] # Get top 1k best Z scores' row indices
+  inds2keep <- intersect(top1k,not_missing_in_any_ancestry)
+
+  locusfile[inds2keep]
+  # Finally write the locusfile
+  fwrite(locusfile[inds2keep], sep=' ',
+    locusfile_path )
+
+  # Dummy all-0 annotation
+  writeLines( c("dummy",rep("0",length(inds2keep))),
+    annotations_path )
+
+  # LD (format is uncompressed plain-text space-delimited)
+  #   Need to make a copy of LD for each run if want to do things in parallel unfortunately, b/c of PAINTOR's restrictive input scheme.
+  paintor_afr_ld <- fread(paste0("in/",cvs$id,"-AFR.phased.vcor1"))[inds2keep,inds2keep,with=F]
+  paintor_afr_ld <- round(paintor_afr_ld, digits=4)
+  paintor_eur_ld <- fread(paste0("in/",cvs$id,"-EUR.phased.vcor1"))[inds2keep,inds2keep,with=F]
+  paintor_eur_ld <- round(paintor_eur_ld, digits=4)
+  fwrite( round(paintor_afr_ld,digits=4), sep=' ', col.names=F,
+    afr_ld_path )
+  fwrite( round(paintor_eur_ld,digits=4), sep=' ', col.names=F,
+    eur_ld_path )
+
+
+  # Terrible semi-hardcoded nonsense to work around 0-sz sims having no Zscore column
+  # TODO (low priority): Now that `runs` contains sample sizes, just take the name if where n!=0 or something. More LoC but clearer inention.
+  Zheads  <- names(locusfile)[4:ncol(locusfile)]
+  LDnames <- sub("^","LD_",sub("_.*","",Zheads))
+
+  # Run PAINTOR
+  system(paste("../../third_party/PAINTOR_V3.0/PAINTOR",
+          "-input", input.files_path,
+          "-in", in_dir,
+          "-out", out_dir,
+          "-Zhead", paste(Zheads,collapse=','),
+          "-LDname", paste(LDnames,collapse=','),
+          "-annotations dummy",
+          "-enumerate 1"
+  ), ignore.stdout=F)
+  # Verify the input is what you expected if you want
+  #print(paste(Zheads,collapse=','))
+  #print(paste(LDnames,collapse=','))
+  #tmp <<- locusfile[inds2keep]
+
+  unlink(c(input.files_path,annotations_path,afr_ld_path,eur_ld_path))
+
+  fread(results_file)
+})})
+# The warnings are just for the sims where sample size was 0 (so, empty)
+  # It's not an issue, if a sim had N=0 its Z-score column is simply omitted.
+```
+
+# Process PAINTOR results
+Sometimes, PAINTOR's results are bad (fails to converge I guess, because when the CV's OR is cranked up to make it obvious, things reliably work fine). See [SuSiEx paper](https://doi.org/10.1101%2F2023.01.07.23284293) and search for "unreasonable".
+```{r,paintor-res}
+pip_mtxs <-
+mapply(paintor_resultss, 1:length(paintor_resultss), SIMPLIFY=F, FUN=function(run_res,run_n) {
+  good_reps <- sapply(run_res, function(rep_res) {
+    sum_pips <- sum(rep_res$Posterior_Prob)
+    if(sum_pips > 0.1 & sum_pips < 5) T else F
+  })
+  print(sprintf("%03d/%03d reps of run%02d were good.",sum(good_reps),length(good_reps),run_n))
+
+  # Because we only took the top 1k to give to PAINTOR, the variants might not be the same each time. Combine results carefully.
+  all_ids <- Reduce(union, sapply(run_res[good_reps],'[',j="RSID"))
+  pip_mtx <- data.table(RSID=all_ids)
+  pip_mtx <- Reduce(function(x,y) y[x,on="RSID"], run_res[good_reps], init=pip_mtx)
+  pip_mtx <- as.matrix(pip_mtx[, .SD, .SDcols = names(pip_mtx) %like% "Posterior"])
+  rownames(pip_mtx) <- all_ids
+  pip_mtx[, rev(seq_len(ncol(pip_mtx)))] # Simply reverse the order of the columns (replications)
+  #tmp <- Reduce(function(x,y) merge(x,y,all=T), run_res[good_reps])
+  #tmp <- tmp[, mean(Posterior_Prob), by="RSID"]
+  #setNames(tmp$V1,tmp$RSID)
+
+  #do.call(cbind, lapply(run_res[good_reps], function(rep_res) {
+  #  rep_pipss <- rep_res$Posterior_Prob
+  #  setNames(rep_pipss, rep_res$RSID)
+  #}))
+})
+
+paintor_cv_pip_mtx <- do.call(cbind,lapply(pip_mtxs, \(x) round(x[cvs$id,],digits=2)))
+paintor_cv_pip_mtx
+
+paintor_avg_pipss <- lapply(pip_mtxs,rowMeans2,na.rm=T) # Avg PIPs across replications
+paintor_sd_pipss <- lapply(pip_mtxs,rowSds,na.rm=T)
+paintor_cv_pip_avgs <- sapply(paintor_avg_pipss, '[', cvs$id) # Avg PIP for the CV
+paintor_cv_pip_sds <- sapply(paintor_sd_pipss, '[', cvs$id) # Avg PIP for the CV
+sapply(paintor_sd_pipss, '[', cvs$id) # Avg PIP SD for the CV (gives an idea of how reliably PAINTOR gets a good PIP for the CV, across replications)
+paintor_cs90ss <- lapply(pip_mtxs, function(run_pip_mtx) { apply(run_pip_mtx, 2, simplify=F, function(rep_pips) {
+  cs100 <- sort(rep_pips,decreasing=T)
+  cs90  <- cs100[seq_len(which.max(cumsum(cs100)>=0.90))]
+})})
+#nrow(ref_leg[do_sim==T][-missing_in_any_ancestry]) # What was the number of variants PAINTOR was given
+paintor_cs90_lengths <- sapply(paintor_cs90ss, function(run_cs90s) lengths(run_cs90s)) # CS90 lengths
+sapply(paintor_cs90ss, function(run_cs90s) sapply(run_cs90s, function(rep_cs90) cvs$id %in% names(rep_cs90)) ) # Proportion of the time the CV was actually in the CS.
+
+rm(pip_mtxs)
+```
+
+# Format input for SuSiEx
+```{r,susiex-input}
+lapply(names(simss), function(sims_nm) {
+lapply(1:n_rep, function(rep_n) {
+if(length(simss[[sims_nm]])>0) {
+  fwrite(data.table(
+    chr=22,
+    snp = ref_leg[do_sim==T,id],
+    bp  = ref_leg[do_sim==T,position],
+    a1  = ref_leg[do_sim==T,a0],
+    a2  = ref_leg[do_sim==T,a1],
+    BETA= simss[[sims_nm]]$b_sims[rep_n,],
+    se  = simss[[sims_nm]]$se_sims[rep_n,],
+    pval= simss[[sims_nm]]$p_sims[rep_n,])[not_missing_in_any_ancestry],
+  sprintf("in/susiex/%s-OR%.2f-%s-rep%03d.txt",cvs$id,cvs$or,sims_nm,rep_n), sep='\t')
+}})})
+```
+
+# Run SuSiEx
+```{r,susiex}
+susiex_resultss <-
+lapply(1:nrow(runs), function(run_n) {
+parallel::mclapply(1:n_rep, mc.cores=4, function(rep_n) {
+
+  results_file <- sprintf("out/susiex/%s-OR%.2f-run%02d-rep%03d.snp",cvs$id,cvs$or,run_n,rep_n)
+  if(file.exists(results_file)) return(fread(results_file))
+
+  run_info <- runs[run_n,]
+  ns <- c()
+  sst_paths <- c()
+  ref_paths <- c()
+  ld_paths <- c()
+  if(run_info$n1>0) {
+    ns <- c(ns,run_info$n1)
+    sst_paths <- c(sst_paths,sprintf("in/susiex/%s-OR%.2f-%s-rep%03d.txt",cvs$id,cvs$or,run_info$sim_nm1,rep_n))
+    ref_paths <- c(ref_paths,paste0("in/",cvs$id,"-AFR")) # .bed/.bim/.fam prefix
+    ld_paths <- c(ld_paths,paste0("in/susiex/",cvs$id,"-AFR"))
+  }
+  if(run_info$n2>0) {
+    ns <- c(ns,run_info$n2)
+    sst_paths <- c(sst_paths,sprintf("in/susiex/%s-OR%.2f-%s-rep%03d.txt",cvs$id,cvs$or,run_info$sim_nm2,rep_n))
+    ref_paths <- c(ref_paths,paste0("in/",cvs$id,"-EUR")) # .bed/.bim/.fam prefix
+    ld_paths <- c(ld_paths,paste0("in/susiex/",cvs$id,"-EUR"))
+  }
+
+  # Run SuSiEx
+  err_code <- system(paste("../../third_party/SuSiEx/bin/SuSiEx",
+    "--sst_file", paste(collapse=',', sst_paths),
+    "--n_gwas",   paste(collapse=',', ns),
+    "--ref_file", paste(collapse=',', ref_paths),
+    "--ld_file",  paste(collapse=',', ld_paths),
+    "--plink ./plink",
+    "--out_dir out/susiex",
+    "--out_name", sprintf("%s-OR%.2f-run%02d-rep%03d",cvs$id,cvs$or,run_n,rep_n),
+    "--level 0.90", # Default: 0.95
+    "--chr 22",
+    "--bp",      paste(collapse=',', c(min(cvs$pos)-500000,max(cvs$pos)+500000)),
+    "--chr_col", paste(collapse=',', rep(1,length(ns))),
+    "--snp_col", paste(collapse=',', rep(2,length(ns))),
+    "--bp_col",  paste(collapse=',', rep(3,length(ns))),
+    "--a1_col",  paste(collapse=',', rep(4,length(ns))),
+    "--a2_col",  paste(collapse=',', rep(5,length(ns))),
+    "--eff_col", paste(collapse=',', rep(6,length(ns))),
+    "--se_col",  paste(collapse=',', rep(7,length(ns))),
+    "--pval_col",paste(collapse=',', rep(8,length(ns))),
+    "--maf 0.005", # Default: 0.005.
+    "--min_purity 0", # Default: 0.5. Even if some credsets are impure and not practically useful, still want all the posteriors for comparison purposes. TODO: Purity filter of 0 causes errors for some loci, see daily note 230621. 0.01 is totally low enough but it not being 0 still bothering me. Low priorty to look into.
+    "--n_sig 1", # Default: 5
+    #"--mult-step True", Default: False
+    "--keep-ambig True",
+    "--pval_thresh 1", # Default: 1e-5
+    #"--threads 1" # Default: 1. Not using multithreading b/c sometimes it segfaults.
+    "--max_iter=100" # Default: 100
+    # defaults: --tol=1e-4
+  ), ignore.stdout=F)
+  if(err_code>0) stop("SuSiEx crashed! Err code: ",err_code)
+
+  fread(results_file)
+})})
+```
+
+# Process SuSiEx results
+```{r,susiex-res}
+pip_mtxs <-
+lapply(susiex_resultss, function(run_res) {
+  do.call(cbind, lapply(run_res, function(rep_res) {
+    rep_pipss <- rep_res$`PIP(CS1)`
+    setNames(rep_pipss, rep_res$SNP)
+  }))
+})
+
+susiex_cv_pip_mtx <- do.call(cbind,lapply(pip_mtxs, \(x) round(x[cvs$id,],digits=2)))
+susiex_cv_pip_mtx
+
+# Copied code from PAINTOR results processing section
+susiex_avg_pipss <- lapply(pip_mtxs,rowMeans2) # Avg PIPs across replications
+susiex_sd_pipss <- lapply(pip_mtxs,rowSds)
+susiex_cv_pip_avgs <- sapply(susiex_avg_pipss, '[', cvs$id) # Avg PIP for the CV
+susiex_cv_pip_sds <- sapply(susiex_sd_pipss, '[', cvs$id) # Avg PIP for the CV
+sapply(susiex_sd_pipss, '[', cvs$id) # Avg PIP SD for the CV (gives an idea of how reliably PAINTOR gets a good PIP for the CV, across replications)
+susiex_cs90ss <- lapply(pip_mtxs, function(run_pip_mtx) { apply(run_pip_mtx, 2, simplify=F, function(rep_pips) {
+  cs100 <- sort(rep_pips,decreasing=T)
+  cs90  <- cs100[seq_len(which.max(cumsum(cs100)>=0.90))]
+})})
+nrow(ref_leg[do_sim==T][not_missing_in_any_ancestry]) # What was the number of variants PAINTOR was given
+susiex_cs90_lengths <- sapply(susiex_cs90ss, function(run_cs90s) lengths(run_cs90s)) # CS90 lengths
+sapply(susiex_cs90ss, function(run_cs90s) sapply(run_cs90s, function(rep_cs90) cvs$id %in% names(rep_cs90)) ) # Proportion of the time the CV was actually in the CS.
+```
+
+# Plot
+```{r}
+avg_pipss_both <-
+mapply(paintor_avg_pipss, susiex_avg_pipss, paintor_sd_pipss, susiex_sd_pipss,
+SIMPLIFY=F, FUN=function(pa,sa,ps,ss) {
+  d <- data.table(id = union(names(pa),names(sa)))
+  pa <- data.table(id = names(pa), paintor_pip_avgs = pa)
+  sa <- data.table(id = names(sa),  susiex_pip_avgs = sa)
+  ps <- data.table(id = names(ps), paintor_pip_sds  = ps)
+  ss <- data.table(id = names(ss),  susiex_pip_sds  = ss)
+  d <- pa[d,on="id"]
+  d <- sa[d,on="id"]
+  d <- ps[d,on="id"]
+  d <- ss[d,on="id"]
+  setnafill(d,fill=0,cols=2:5)
+})
+
+# Base R quick version
+#plot((avg_pipss_both[[1]]$paintor_pip_avgs), (avg_pipss_both[[1]]$susiex_pip_avgs))
+#plot((avg_pipss_both[[2]]$paintor_pip_avgs), (avg_pipss_both[[2]]$susiex_pip_avgs))
+#plot((avg_pipss_both[[3]]$paintor_pip_avgs), (avg_pipss_both[[3]]$susiex_pip_avgs))
+#plot((avg_pipss_both[[4]]$paintor_pip_avgs), (avg_pipss_both[[4]]$susiex_pip_avgs))
+#plot((avg_pipss_both[[5]]$paintor_pip_avgs), (avg_pipss_both[[5]]$susiex_pip_avgs))
+
+
+```
+```{r}
+# ggplot ~fancy~ version
+gs <- lapply(1:9, function(run_i) {
+  d1 <- data.table(col="a",
+              x=paintor_cv_pip_mtx[,run_i],
+              y=susiex_cv_pip_mtx[,run_i])
+  d2 <- data.table(col="b",
+              x=avg_pipss_both[[run_i]]$paintor_pip_avgs,
+              y=avg_pipss_both[[run_i]]$susiex_pip_avgs)
+  data <- rbind(d1,d2)
+  data[is.na(data)] <- 0
+  ggplot() +
+    geom_point(data=data, aes(x=x,y=y,color=col), show.legend=run_i==1, shape=16, alpha=0.5) +
+    #scale_color_manual(values=c("a"="red","b"="black"))+#, labels=c("CV's PIP in one replication", "All variants: mean PIP across replications")) +
+    scale_color_manual(values=c("red","black"), labels=c("CV: one replication", "All variants: mean PIP"), name="Legend") +
+    scale_x_continuous(breaks=c(0,0.5,1)) + scale_y_continuous(breaks=c(0,0.5,1)) +
+    theme_bw() +
+    labs(x="PAINTOR PIP", y="SuSiEx PIP") + 
+    ggtitle(ifelse(run_i==1,cvs$id,""),
+            subtitle=paste0(fancy_run_nms[run_i],", ",n_rep," replications")) +
+    theme(legend.position=c(0.25,0.8),
+          legend.key.size=unit(0.18,"cm"),
+          legend.title = element_text(size=8),
+          legend.text = element_text(size=6),
+          plot.title = element_text(size=9),
+          plot.subtitle = element_text(size=7),
+          axis.title = element_text(size=8))
+    #geom_point(data = cbind(cv_x  = paintor_cv_pip_mtx[,run_i],
+    #                        cv_y  =  susiex_cv_pip_mtx[,run_i]),
+    #           aes(x=cv_x, y=cv_y, color="red"),
+    #           show.legend=run_i==1) +
+    #geom_point(data = cbind(avg_x = avg_pipss_both[[run_i]]$paintor_pip_avgs,
+    #                        avg_y = avg_pipss_both[[run_i]]$paintor_pip_avgs),
+    #           aes(x=avg_x,y=avg_y,color="black"),
+    #           show_legend=run_i==1) +
+    #scale_color_manual(values = c("red"="red", "black"="black"),
+    #                   labels=c("CV's PIP in one replication",
+    #                            "All variants: mean PIP across replications"))
+})
+
+library(cowplot)
+plot_grid(plotlist=gs,labels=LETTERS[1:9],nrow=3,label_size=10)
+
+#ggplot(show.legend=T) +
+#  geom_point(data=cbind(x=paintor_cv_pip_mtx[,run_i], y=susiex_cv_pip_mtx[,run_i]),
+#             aes(x=x, y=y), col="red", show.legend=T) +
+#  geom_point(data=avg_pipss_both[[run_i]],
+#             aes(x=paintor_pip_avgs,y=susiex_pip_avgs), show.legend=T) +
+#  #geom_point(data=avg_pipss_both[[run_i]][id==cvs$id],
+#  #           aes(x=(paintor_pip_avgs), y=(susiex_pip_avgs)), col="red") +
+#  #geom_errorbar(data=avg_pipss_both[[run_i]][id==cvs$id],
+#  #              aes(xmin=(max(0,paintor_pip_avgs-paintor_pip_sds)),
+#  #                  xmax=(      paintor_pip_avgs+paintor_pip_sds)),
+#  #              width=0.1, col="red") +
+#  #geom_errorbar(data=avg_pipss_both[[run_i]][id==cvs$id],
+#  #              aes(ymin=(max(0, susiex_pip_avgs- susiex_pip_sds)),
+#  #                  ymax=(       susiex_pip_avgs+ susiex_pip_sds)),
+#  #              width=0.1, col="red") +
+#  #xlim(-5,0) + ylim(-5,0) +
+#  theme_bw() + theme(legend.position=c(0.1,0.9)) +
+#  labs(x="PAINTOR PIP", y="SuSiEx PIP") + 
+#  scale_color_manual(values = c("hi"="red", squeak="green"), name="myleg") +
+#  ggtitle(ttl, subtitle=paste0(sttl,", ",n_rep," replications"))
+
+```
+```{r}
+cs90_length_avgs <- rbind(PAINTOR=colMeans2(paintor_cs90_lengths), SuSiEx=colMeans2(susiex_cs90_lengths))
+#cs90_length_sds <- rbind(PAINTOR=colSds(paintor_cs90_lengths), SuSiEx=colSds(susiex_cs90_lengths))
+colnames(cs90_length_avgs) <- sub(" ","\n",fancy_run_nms)
+p <- barplot(cs90_length_avgs, beside=T, legend=rownames(cs90_length_avgs),
+  main="Average 90% Credible Set Size", cex.names=0.6)
+#arrows(p, cs90_length_avgs+cs90_length_sds^2, p, cs90_length_avgs-cs90_length_sds^2, angle=90, length=0.1)
+
+cv_pip_avgs <- rbind(PAINTOR=paintor_cv_pip_avgs,SuSiEx=susiex_cv_pip_avgs)
+cv_pip_sds <- rbind(PAINTOR=paintor_cv_pip_sds, SuSiEx=susiex_cv_pip_sds)
+colnames(cv_pip_avgs) <- sub(" ","\n",fancy_run_nms)
+p <- barplot(cv_pip_avgs, beside=T, legend=rownames(cv_pip_avgs),
+  main="Average PIP Given to True CV", cex.names=0.6)
+arrows(p, cv_pip_avgs+cv_pip_sds^2, p, cv_pip_avgs-cv_pip_sds^2, angle=90, length=0.1)
+```

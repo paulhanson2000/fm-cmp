@@ -1,0 +1,241 @@
+---
+---
+
+```{r}
+library(simGWAS)
+library(data.table)
+library(scales) # for alpha() for plots
+```
+
+# Read 1kG data
+```{r}
+#ref_hap <- lapply(fread("chr22_mac_gt40.hap.gz")+1, as.raw)
+ref_hap <- fread("data/chr22_mac_gt40.hap.gz")
+ref_leg <- fread("data/chr22_mac_gt40.leg.gz")
+ref_samp <- fread("data/1000GP_Phase3.sample")
+```
+
+# Process data to simGWAS format
+```{r}
+#h1 <- ref_hap[seq(1,nc-1,by=2)]
+#h2 <- ref_hap[seq(2,nc  ,by=2)]
+h1 <- ref_hap[, .SD, .SDcols=seq(1,ncol(ref_hap)-1,by=2)]
+h2 <- ref_hap[, .SD, .SDcols=seq(2,ncol(ref_hap)  ,by=2)]
+freq <- as.data.frame(t(cbind(h1,h2))+1)
+rm(h1,h2,ref_hap)
+colnames(freq) <- ref_leg$id
+freq$Probability <- 1/nrow(freq)
+```
+
+# Select random CVs
+```{r}
+set.seed(123)
+#cvs <- data.table(id = sample(ref_leg$id,1))
+cvs <- data.table(id = "rs188233281:23916033:C:T") # avg LD 0.0698755
+#cvs <- data.table(id = "rs17713646:30375965:A:G" ) # avg LD 0.2011897
+#cvs <- data.table(id = "rs199796575:40965771:A:C") # avg LD 0.5695427
+cvs$or  <- c(1.5)
+cvs$pos <- ref_leg[id==cvs$id,position]
+cvs$idx <- which(cvs$id==ref_leg$id)
+```
+
+# Select 1Mb region about CV
+```{r}
+ref_leg$do_sim <- ref_leg$position < max(cvs$pos)+500000 &
+                  ref_leg$position > min(cvs$pos)-500000
+```
+
+# Pre-calc LD & GenoProbList
+```{r}
+FP <- make_GenoProbList(snps=ref_leg[do_sim==T,id], W=cvs$id, freq=freq, n_thread=4) # 7s
+LD <- simGWAS:::wcor2(as.matrix( freq[,colnames(freq) %in% ref_leg[do_sim==T,id]] ), freq$Probability) # 8s
+diag(LD) <- 1.0001
+# Due to some negligible approximations and the efficient implementation of simGWAS's wcor2, the LD might not be positive definite
+#   (which means the Cholesky decomposition (fastest decomposition method) can not be used when simulating data).
+#   To fix this just add a small amount to the diagonal.
+```
+
+# Simulate!
+```{r}
+# --- Simulate a GWAS of expected Z scores ---
+# No need for set.seed here, not random
+z_exp <- expected_z_score(
+  N0=4000, N1=1000, # N controls, cases
+  snps=ref_leg[do_sim==T,id], # column names in freq of SNPs for which Z scores should be generated
+  W=cvs$id, # CVs, subset of snps
+  gamma.W=log(cvs$or), # CVs' log(OR)s
+  freq=freq, # Ref haplotypes
+  GenoProbList=FP
+)
+
+se_exp <- sqrt(expected_vbeta(
+  N0=4000, N1=1000, # N controls, cases
+  snps=ref_leg[do_sim==T,id], # column names in freq of SNPs for which Z scores should be generated
+  W=cvs$id, # CVs, subset of snps
+  gamma.W=log(cvs$or), # CVs' log(OR)s
+  freq=freq, # Ref haplotypes
+  GenoProbList=FP
+))
+
+b_exp <- z_exp*se_exp
+p_exp <- pnorm(-abs(z_exp))*2
+
+
+# --- Simulate more GWAS, about the expected Z-score of the first simulation ---
+n_rep <- 3 # TODO: 100 if possible
+
+set.seed(123)
+z_sims <- simulated_z_score(
+  N0=4000, N1=1000, # N controls, cases
+  snps=ref_leg[do_sim==T,id], # column names in freq of SNPs for which Z scores should be generated
+  W=cvs$id, # CVs, subset of snps
+  gamma.W=log(cvs$or), # CVs' log(OR)s
+  freq=freq[,names(freq) %in% c(ref_leg[do_sim==T,id],"Probability")], # Ref haplotypes
+  GenoProbList = FP,
+  LD=LD,
+  rmvnorm_method="chol",
+  nrep=n_rep
+)
+
+set.seed(123)
+se_sims <- sqrt(simulated_vbeta(
+  N0=4000, N1=1000, # N controls, cases
+  snps=ref_leg[do_sim==T,id], # column names in freq of SNPs for which Z scores should be generated
+  W=cvs$id, # CVs, subset of snps
+  gamma.W=log(cvs$or), # CVs' log(OR)s
+  freq=freq[,names(freq) %in% c(ref_leg[do_sim==T,id],"Probability")], # Ref haplotypes
+  GenoProbList = FP,
+  nrep=n_rep
+))
+
+b_sims <- z_sims*se_sims
+p_sims <- pnorm(-abs(z_sims))*2
+```
+
+# Plot replications
+```{r}
+local({
+  # Choose one
+  #exp <- abs(z_exp); sims <- abs(z_sims);         ylab <- "|Z|"
+  exp <- abs(b_exp); sims <- abs(b_sims);         ylab <- "log(OR)  (β)"
+  #exp <- -log10(p_exp); sims <- -log10(p_sims);   ylab <- "-log10(P)"
+
+  # Plot simulated expected values
+  p <- plot(ref_leg[do_sim==T,position/1000000], exp,
+       cex=0.5,pch=16, col=alpha("black",0.8),
+       xlab="Position (Mbp)", ylab=ylab,
+       ylim=c(0,max(rbind(exp,sims))) #, xlim=c(44,48) # Can edit to zoom in
+  )
+  # Circle the CVs
+  p + points(ref_leg[cvs$idx,position/1000000], exp[ref_leg[do_sim==T,id==cvs$id]],
+    cex=1.0,pch= 1, col=alpha("black",1.0), lwd=2)
+
+  # Similarly, plot the simulated replications
+  for(i in 1:n_rep) {
+    p + points(ref_leg[do_sim==T,position/1000000], sims[i,],
+      cex=0.5,pch=16, col=alpha(palette("Dark 2")[i],0.3))
+    p + points(ref_leg[cvs$idx,  position/1000000], sims[i,][ref_leg[do_sim==T,id==cvs$id]],
+      cex=1.0,pch= 1, col=alpha(palette("Dark 2")[i],1.0), lwd=2)
+  }
+
+  # Additional vertical lines to mark the CVs
+  p + abline(v=ref_leg[cvs$idx,position/1000000],col="red",lty=2)
+  p + abline(h=0)
+})
+```
+
+
+# Make LD for finemapping methods 
+```{r}
+writeLines(ref_leg[do_sim==T,id], "extract_snps.txt") # Make file of IDs for plink --extract
+system(paste("./plink2",
+  "--haps   data/chr22_mac_gt40.hap.gz",
+  "--legend data/chr22_mac_gt40.leg.gz 22",
+  "--extract extract_snps.txt",
+  "--r-phased square allow-ambiguous-allele", # For PAINTOR
+  "--make-bed" # For SuSiEx
+))
+system("diff extract_snps.txt plink2.phased.vcor1.vars") # Should print n/t
+```
+
+# Format input for PAINTOR
+```{r}
+# Input.files
+writeLines("locus1","in/paintor/loci.input.files")
+
+# Dummy all-0 annotation
+writeLines( c("dummy",rep("0",sum(ref_leg$do_sim))), "in/paintor/locus1.annotations" )
+
+# Z scores "locusfile"
+fwrite(data.table(
+  CHR  = rep("chr22",sum(ref_leg$do_sim)),
+  POS  = ref_leg[do_sim==T,position],
+  RSID = ref_leg[do_sim==T,id],
+  z_all = z_sims[1,]
+  # Later, when 2 ancestries, change to z_afr & z_eur cols
+), "in/paintor/locus1", sep=' ')
+
+# LD (plink except make it space-delimited)
+# TODO: should be called locus1.LD_AFR & locus1.LD_EUR, but on just locus1.LD_ALL
+fwrite(fread("plink2.phased.vcor1"),"in/paintor/locus1.LD_ALL",sep=' ',col.names=F)
+```
+# Run PAINTOR
+```{r}
+system(paste("../../third_party/PAINTOR_V3.0/PAINTOR",
+        "-input in/paintor/loci.input.files",
+        "-in in/paintor/",
+        "-out out/paintor/",
+        "-Zhead z_all",
+        "-LDname LD_ALL",
+        "-annotations dummy",
+        "-enumerate 1"
+))
+```
+
+# Format input for SuSiEx
+```{r}
+ancestries <- c("ALL") # TODO, tmp
+
+# Sumstats file
+fwrite(data.table(
+  chr=22,
+  bp  = ref_leg[do_sim==T,position],
+  snp = ref_leg[do_sim==T,id],
+  a1  = ref_leg[do_sim==T,a0],
+  a2  = ref_leg[do_sim==T,a1],
+  BETA= b_sims[1,], # TODO loop through the replications. Or overwrite _just_ this column later, would also work.
+  se  = se_sims[1,],
+  pval= p_sims[1,]
+), paste0("in/susiex/sst-",ancestries[1],".txt"), sep='\t') # TODO, multiple ancestries later. But also allow separately, b/c want to compare single- & multi- anc results
+```
+# Run SuSiEx
+```{r}
+system(paste("../../third_party/SuSiEx/bin/SuSiEx",
+  "--sst_file", paste(collapse=',', paste0("in/susiex/sst-",ancestries,".txt")),
+  "--n_gwas",   paste(collapse=',', rep("5000",length(ancestries))),
+  "--ld_file",  paste(collapse=',', paste0("in/susiex/ld-", ancestries)),
+  "--ref_file plink2", # ironically the plink1.9 .bed files were generated by plink2
+  "--plink ./plink",
+  "--out_dir out/susiex",
+  "--out_name susiex_results",
+  "--level 0.95", # Default: 0.95
+  "--chr 22",
+  "--bp",      paste(collapse=',', c(min(cvs$pos)-500000,max(cvs$pos)+500000)),
+  "--chr_col", paste(collapse=',', rep(1,length(ancestries))),
+  "--bp_col",  paste(collapse=',', rep(2,length(ancestries))),
+  "--snp_col", paste(collapse=',', rep(3,length(ancestries))),
+  "--a1_col",  paste(collapse=',', rep(4,length(ancestries))),
+  "--a2_col",  paste(collapse=',', rep(5,length(ancestries))),
+  "--eff_col", paste(collapse=',', rep(6,length(ancestries))),
+  "--se_col",  paste(collapse=',', rep(7,length(ancestries))),
+  "--pval_col",paste(collapse=',', rep(8,length(ancestries))),
+  "--maf 0.005", # Default: 0.005.
+  "--min_purity 0.5", # Default: 0.5. Even if some credsets are impure and not practically useful, still want all the posteriors for comparison purposes. TODO: Purity filter of 0 causes errors for some loci, see daily note 230621. 0.01 is totally low enough but it not being 0 still bothering me. Low priorty to look into.
+  "--n_sig 1", # Default: 5
+  #"--mult-step True", Default: False
+  "--keep-ambig True",
+  "--pval_thresh 1e-5", # Default: 1e-5
+  "--threads 4"
+  # defaults: --max_iter=100, --tol=1e-4, --n_sig=5
+))
+```
