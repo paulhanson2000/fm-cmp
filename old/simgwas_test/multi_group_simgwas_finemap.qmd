@@ -26,9 +26,9 @@ ref_samp <- fread("data/1000GP_Phase3.sample")
 #cvs <- data.table(id = "rs12169200:27638781:A:G")    #    0.059    0.063   0.32   0.32
 #cvs <- data.table(id = "rs3076533:48883825:AGTGT:A") #    0.094    0.095   0.70   0.71
 #cvs <- data.table(id = "rs5755304:35201115:T:C")     #    0.51     0.53    0.66   0.61
-#cvs <- data.table(id = "rs3076533:48883825:AGTGT:A") #    0.094    0.095   0.70   0.71
-cvs <- data.table(id = "rs28625949:24655227:G:A")    #    0.13     0.56   0.35   0.35
-#cvs <- data.table(id = "rs9608946:30892255:A:G")     #    0.18     0.58    0.23   0.23
+#cvs <- data.table(id = "rs5755301:35200936:T:G")     #    0.52     0.56i   0.66   0.61
+#cvs <- data.table(id = "rs28625949:24655227:G:A")    #    0.13     0.56    0.35   0.35
+cvs <- data.table(id = "rs9608946:30892255:A:G")     #    0.18     0.58    0.23   0.23
                                                       # AFRavgLD EURavgLD AFRfrq EURfrq
 cvs$or  <- c(1.1)
 cvs$pos <- ref_leg[id==cvs$id,position]
@@ -155,8 +155,7 @@ fancy_run_nms <- c("100k EUR", "1k+99k AFR+EUR", "5k+95k AFR+EUR", "10k+90k AFR+
 #   Note if the Z score was NA, that's b/c the MAC was 0, meaning all replications and the LD will be NA for those same variants too.
 not_missing_in_any_ancestry <- intersect(which(!is.na(simss$AFR_100000$z_sims[1,])), which(!is.na(simss$EUR_100000$z_sims[1,])))
 
-#paintor_resultss <-
-  tmp <- 
+paintor_resultss <-
 lapply(1:nrow(runs), FUN=function(run_n) { # For each pair of ancestry sample sizes
 parallel::mclapply(1:n_rep, mc.cores=4, function(rep_n) { # For each replication
   in_dir <- "in/paintor/"
@@ -205,11 +204,13 @@ parallel::mclapply(1:n_rep, mc.cores=4, function(rep_n) { # For each replication
   #   Need to make a copy of LD for each run if want to do things in parallel unfortunately, b/c of PAINTOR's restrictive input scheme.
   paintor_afr_ld <- fread(paste0("in/",cvs$id,"-AFR.phased.vcor1"))[inds2keep,inds2keep,with=F]
   paintor_afr_ld <- round(paintor_afr_ld, digits=4)
+  paintor_afr_ld[is.na(paintor_afr_ld)] <- 0 # On very rare occasions, seems like the LD has NAs. Must come from PLINK, and only happens s/times because the NA variants are in the top 1k p-values only s/times.
   paintor_eur_ld <- fread(paste0("in/",cvs$id,"-EUR.phased.vcor1"))[inds2keep,inds2keep,with=F]
   paintor_eur_ld <- round(paintor_eur_ld, digits=4)
-  fwrite( round(paintor_afr_ld,digits=4), sep=' ', col.names=F,
+  paintor_eur_ld[is.na(paintor_eur_ld)] <- 0
+  fwrite( paintor_afr_ld, sep=' ', col.names=F,
     afr_ld_path )
-  fwrite( round(paintor_eur_ld,digits=4), sep=' ', col.names=F,
+  fwrite( paintor_eur_ld, sep=' ', col.names=F,
     eur_ld_path )
 
 
@@ -253,20 +254,13 @@ mapply(paintor_resultss, 1:length(paintor_resultss), SIMPLIFY=F, FUN=function(ru
   print(sprintf("%03d/%03d reps of run%02d were good.",sum(good_reps),length(good_reps),run_n))
 
   # Because we only took the top 1k to give to PAINTOR, the variants might not be the same each time. Combine results carefully.
-  all_ids <- Reduce(union, sapply(run_res[good_reps],'[',j="RSID"))
+  all_ids <- Reduce(union, sapply(run_res,'[',j="RSID"))
+  run_res[!good_reps] <- lapply(run_res[!good_reps], function(rep_res) {rep_res$Posterior_Prob <- rep(0,nrow(rep_res)); rep_res} )
   pip_mtx <- data.table(RSID=all_ids)
-  pip_mtx <- Reduce(function(x,y) y[x,on="RSID"], run_res[good_reps], init=pip_mtx)
+  pip_mtx <- Reduce(function(x,y) y[x,on="RSID"], run_res, init=pip_mtx)
   pip_mtx <- as.matrix(pip_mtx[, .SD, .SDcols = names(pip_mtx) %like% "Posterior"])
   rownames(pip_mtx) <- all_ids
   pip_mtx[, rev(seq_len(ncol(pip_mtx)))] # Simply reverse the order of the columns (replications)
-  #tmp <- Reduce(function(x,y) merge(x,y,all=T), run_res[good_reps])
-  #tmp <- tmp[, mean(Posterior_Prob), by="RSID"]
-  #setNames(tmp$V1,tmp$RSID)
-
-  #do.call(cbind, lapply(run_res[good_reps], function(rep_res) {
-  #  rep_pipss <- rep_res$Posterior_Prob
-  #  setNames(rep_pipss, rep_res$RSID)
-  #}))
 })
 
 paintor_cv_pip_mtx <- do.call(cbind,lapply(pip_mtxs, \(x) round(x[cvs$id,],digits=2)))
@@ -373,7 +367,7 @@ parallel::mclapply(1:n_rep, mc.cores=4, function(rep_n) {
 ```{r,susiex-res}
 pip_mtxs <-
 lapply(susiex_resultss, function(run_res) {
-  do.call(cbind, lapply(run_res, function(rep_res) {
+    do.call(cbind, lapply(run_res, function(rep_res) {
     rep_pipss <- rep_res$`PIP(CS1)`
     setNames(rep_pipss, rep_res$SNP)
   }))
@@ -392,12 +386,12 @@ susiex_cs90ss <- lapply(pip_mtxs, function(run_pip_mtx) { apply(run_pip_mtx, 2, 
   cs100 <- sort(rep_pips,decreasing=T)
   cs90  <- cs100[seq_len(which.max(cumsum(cs100)>=0.90))]
 })})
-nrow(ref_leg[do_sim==T][not_missing_in_any_ancestry]) # What was the number of variants PAINTOR was given
+#nrow(ref_leg[do_sim==T][not_missing_in_any_ancestry]) # What was the number of variants PAINTOR was given
 susiex_cs90_lengths <- sapply(susiex_cs90ss, function(run_cs90s) lengths(run_cs90s)) # CS90 lengths
 sapply(susiex_cs90ss, function(run_cs90s) sapply(run_cs90s, function(rep_cs90) cvs$id %in% names(rep_cs90)) ) # Proportion of the time the CV was actually in the CS.
 ```
 
-# Plot
+# Plots
 ```{r}
 avg_pipss_both <-
 mapply(paintor_avg_pipss, susiex_avg_pipss, paintor_sd_pipss, susiex_sd_pipss,
@@ -438,68 +432,39 @@ gs <- lapply(1:9, function(run_i) {
     geom_point(data=data, aes(x=x,y=y,color=col), show.legend=run_i==1, shape=16, alpha=0.5) +
     #scale_color_manual(values=c("a"="red","b"="black"))+#, labels=c("CV's PIP in one replication", "All variants: mean PIP across replications")) +
     scale_color_manual(values=c("red","black"), labels=c("CV: one replication", "All variants: mean PIP"), name="Legend") +
-    scale_x_continuous(breaks=c(0,0.5,1)) + scale_y_continuous(breaks=c(0,0.5,1)) +
+    scale_x_continuous(breaks=c(0,0.5,1), limits=c(0,1)) + scale_y_continuous(breaks=c(0,0.5,1), limits=c(0,1)) +
     theme_bw() +
     labs(x="PAINTOR PIP", y="SuSiEx PIP") + 
     ggtitle(ifelse(run_i==1,cvs$id,""),
             subtitle=paste0(fancy_run_nms[run_i],", ",n_rep," replications")) +
-    theme(legend.position=c(0.25,0.8),
+    theme(legend.position=c(0.15,0.84),
           legend.key.size=unit(0.18,"cm"),
           legend.title = element_text(size=8),
-          legend.text = element_text(size=6),
-          plot.title = element_text(size=9),
-          plot.subtitle = element_text(size=7),
+          legend.text = element_text(size=8),
+          plot.title = element_text(size=10,face="bold"),
+          plot.subtitle = element_text(size=8,face="bold"),
           axis.title = element_text(size=8))
-    #geom_point(data = cbind(cv_x  = paintor_cv_pip_mtx[,run_i],
-    #                        cv_y  =  susiex_cv_pip_mtx[,run_i]),
-    #           aes(x=cv_x, y=cv_y, color="red"),
-    #           show.legend=run_i==1) +
-    #geom_point(data = cbind(avg_x = avg_pipss_both[[run_i]]$paintor_pip_avgs,
-    #                        avg_y = avg_pipss_both[[run_i]]$paintor_pip_avgs),
-    #           aes(x=avg_x,y=avg_y,color="black"),
-    #           show_legend=run_i==1) +
-    #scale_color_manual(values = c("red"="red", "black"="black"),
-    #                   labels=c("CV's PIP in one replication",
-    #                            "All variants: mean PIP across replications"))
 })
 
 library(cowplot)
+png(paste0(cvs$id,"-scatter.png"),width=800,height=800,res=100)
 plot_grid(plotlist=gs,labels=LETTERS[1:9],nrow=3,label_size=10)
-
-#ggplot(show.legend=T) +
-#  geom_point(data=cbind(x=paintor_cv_pip_mtx[,run_i], y=susiex_cv_pip_mtx[,run_i]),
-#             aes(x=x, y=y), col="red", show.legend=T) +
-#  geom_point(data=avg_pipss_both[[run_i]],
-#             aes(x=paintor_pip_avgs,y=susiex_pip_avgs), show.legend=T) +
-#  #geom_point(data=avg_pipss_both[[run_i]][id==cvs$id],
-#  #           aes(x=(paintor_pip_avgs), y=(susiex_pip_avgs)), col="red") +
-#  #geom_errorbar(data=avg_pipss_both[[run_i]][id==cvs$id],
-#  #              aes(xmin=(max(0,paintor_pip_avgs-paintor_pip_sds)),
-#  #                  xmax=(      paintor_pip_avgs+paintor_pip_sds)),
-#  #              width=0.1, col="red") +
-#  #geom_errorbar(data=avg_pipss_both[[run_i]][id==cvs$id],
-#  #              aes(ymin=(max(0, susiex_pip_avgs- susiex_pip_sds)),
-#  #                  ymax=(       susiex_pip_avgs+ susiex_pip_sds)),
-#  #              width=0.1, col="red") +
-#  #xlim(-5,0) + ylim(-5,0) +
-#  theme_bw() + theme(legend.position=c(0.1,0.9)) +
-#  labs(x="PAINTOR PIP", y="SuSiEx PIP") + 
-#  scale_color_manual(values = c("hi"="red", squeak="green"), name="myleg") +
-#  ggtitle(ttl, subtitle=paste0(sttl,", ",n_rep," replications"))
-
+dev.off()
 ```
 ```{r}
-cs90_length_avgs <- rbind(PAINTOR=colMeans2(paintor_cs90_lengths), SuSiEx=colMeans2(susiex_cs90_lengths))
-#cs90_length_sds <- rbind(PAINTOR=colSds(paintor_cs90_lengths), SuSiEx=colSds(susiex_cs90_lengths))
+cs90_length_avgs <- rbind(PAINTOR=colMedians(paintor_cs90_lengths), SuSiEx=colMedians(susiex_cs90_lengths))
 colnames(cs90_length_avgs) <- sub(" ","\n",fancy_run_nms)
-p <- barplot(cs90_length_avgs, beside=T, legend=rownames(cs90_length_avgs),
-  main="Average 90% Credible Set Size", cex.names=0.6)
-#arrows(p, cs90_length_avgs+cs90_length_sds^2, p, cs90_length_avgs-cs90_length_sds^2, angle=90, length=0.1)
-
+png(paste0(cvs$id,"-cslen.png"), width=700,height=300)
+barplot(cs90_length_avgs, beside=T, legend=rownames(cs90_length_avgs),
+  main="Median 90% Credible Set Size", cex.names=0.8)
+dev.off()
+```
+```{r}
 cv_pip_avgs <- rbind(PAINTOR=paintor_cv_pip_avgs,SuSiEx=susiex_cv_pip_avgs)
-cv_pip_sds <- rbind(PAINTOR=paintor_cv_pip_sds, SuSiEx=susiex_cv_pip_sds)
 colnames(cv_pip_avgs) <- sub(" ","\n",fancy_run_nms)
+png(paste0(cvs$id,"-csavg.png"), width=700,height=300)
 p <- barplot(cv_pip_avgs, beside=T, legend=rownames(cv_pip_avgs),
-  main="Average PIP Given to True CV", cex.names=0.6)
-arrows(p, cv_pip_avgs+cv_pip_sds^2, p, cv_pip_avgs-cv_pip_sds^2, angle=90, length=0.1)
+  main="Average PIP Given to True CV", cex.names=0.6,
+  ylim=c(0,1))
+dev.off()
 ```
