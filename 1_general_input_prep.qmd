@@ -25,7 +25,7 @@ fix_yaml <- function(a) {if(is.list(a)) sapply(a, function(a2) lapply(a2, fix_ya
 #| cache: false
 misc_config <- fix_yaml(yaml::read_yaml("config/misc.config"))
 data_config <- fread("config/data.config")
-loci_config <- fread("config/loci-min.config")
+loci_config <- fread("config/loci.config")
 anno_config <- fread("config/anno.config")
   ld_config <- fread("config/ld.config")
  chr_nm_map <- fread("config/ucsc_chr_names_map.txt")
@@ -174,9 +174,11 @@ if(tolower(misc_config$ref_panel_ref_genome) %in% c("grch36"       )) misc_confi
 if(tolower(misc_config$ref_panel_ref_genome) %in% c("grch37", "b37")) misc_config$ref_panel_ref_genome <- "hg19"
 if(tolower(misc_config$ref_panel_ref_genome) %in% c("grch38"       )) misc_config$ref_panel_ref_genome <- "hg38"
 
-# TODO: would be good if it didn't turn already-properly-named chrs to NA. I.e. should be idempotent
-loci_config$chr <- chr_nm_map$to[match(loci_config$chr, chr_nm_map$from)]
-loci_config$chr <- factor(loci_config$chr, levels=unique(chr_nm_map$to))
+# TODO: would be good if it didn't turn already-properly-named chrs to NA. I.e. should be idempotent. The if statement is a messy fix.
+if(!any(is.na(match(loci_config$chr,chr_nm_map$from)))) {
+  loci_config$chr <- chr_nm_map$to[match(loci_config$chr, chr_nm_map$from)]
+  loci_config$chr <- factor(loci_config$chr, levels=unique(chr_nm_map$to))
+}
 ```
 
 ### `liftOver`
