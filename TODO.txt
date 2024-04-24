@@ -1,0 +1,61 @@
+# -- Minutia ---
+• init/get_data.sh: Fix PAINTOR annotation library download. This was before I knew about curl -L option.
+• init/get_tools.sh: Use Homebrew for Mac AND Linux installs, using custom prefix so user doesn't get a/t they don't want installed in their computer.
+• init/get_r_pkgs.R:
+    Instead of all that nonsense about how to compile data.table w/ multi-threading, just do it for them with a custom Makevars file. (See work journal 240406)
+    Install all R pkgs to custom directory s.t. user's main install isn't bloated. (See https://stackoverflow.com/a/2989369.) This would also ameliorate PolyFun's dependency on an old version of susieR.
+• Make sure scripts run with simple sh, not just bash.
+• Provide pre-compiled APE binaries for all the third_party/ stuff for maximum swag points and to dodge a million possible user compiling issues? (Still leave the option for compiling themselves.)
+    Would need GitHub Actions b/c distributing random binaries is sus.
+• Add download integrity-checking to vcfs2gds because gnomAD downloads often got corrupted midway and fail silently.
+• Better chr_nm_map'ing. Steal the big lists from VEP. But also allow use to provide their own if they have a non-VEP species.
+• Update to v4+ of gnomAD. Current download link I'm using appears to have broken a/w.
+• bcftoolsPipableCmd can take a long time when getting from a server... add a printout message maybe? Or a timeout or something.
+
+# --- Bigger changes ---
+• Before getting too far in implementation, try out a more FM methods, especially indiv-lvl data ones. Better to design the pipeline with all the wacky input formats you'll need to support already in mind.
+• Filenames first.
+    Code organization strat I'd like to try, defining all filenames at the top of script.
+    This would give the reader a clearer idea of what sort of things happen in the script, what are the inputs and outputs and where they go, all the files the script touches, etc.
+    Would also make both Quarto and manual caching much clearer.
+• Instead of digest hashcodes, let the user provide a name in the config and name folders based on that.
+    What if user makes small changes but runs with same name? Just give a "are you sure you want to overwrite?" warning?
+    Similarly, wouldn't I want to benefit from caching if two runs were very similar, even if the user changed the name?
+    Could also do BOTH a name and digest: "my_run-9adsf79" in case user is too lazy to rename after a change to the config.
+    Bah, lots of cache invalidation and organization logic to think about, prone to bugs. Try to keep it simple and remem if s/t isn't a bottleneck it's okay if it's inefficient.
+• Related to ^, save copies of config files too.
+    Don't know why didn't think of before: just directly compare non-digest'd config files for to check similarities and differences between runs and know what needs to be cached or not.
+    Also good for reproducibility.
+• Logging:
+    Add better logging. Print everything the user might want to know. "x of y variants were filtered out in <this step>", etc.
+    Add a log() function which both prints a message and writes the same thing to a .log file alongside the results for that run. (Open an 'a' append connection to log file.)
+• GDS-ification rewrite: Turn all user's input sumstats and indiv-level data when I get to that) into GDS form
+    Advantages:
+      + Could use many large sumstat files with low mem footprint and fast load times after the first conversion.
+      + Unified downstream code always acting on GDS files, whether user inputs sumstats indiv-level VCFs
+• Reformat loci to use GenomicRanges?
+• Optimize LD:
+    Use LDMat for LD compression and fast indexing.
+        Either edit FM methods to use LDMat format (way too much work), or make a layer between which can extract the desired regions from an LDMat file and output to w/e format needed for FM method input.
+        LDMat's in Python, but remem can use Python in Quarto. Maybe could do something disgusting like open an OS pipe between R & Python? :o
+    Use quickLD instead of snpgdsLDMat? Maybe overkill.
+• Input validation. Mega-boring, but knowing if the data is valid up-front:
+    Saves the user a lot of time instead of running into an error midway through the script
+    Simplifies my code greatly because all the error-checking stuff is in one function at the top.
+• LiftOver
+    Use shiny new bcftools liftover (https://doi.org/10.1093/bioinformatics/btae038). If only I had this when I started this proj....
+        (Broadie approved :) https://liftover.broadinstitute.org/)
+• Take another look at MungeSumstats. Is it worth the dependency? Very well-made, but human only.
+    I think the decision will come down to if it can do a/t for other-species data. If not, then I don't want two completely separate QC paths.
+    This might be better to let the user do themselves, before even inputting into the pipeline, instead of adding yet another feature to the pipeline.
+• Meta-analysis. (Since fgwas can only handle one ancestry.) Or use multiple different annotation models, one per ancestry. Give user the option, or is that too complicated?
+    This opens up a whole can of worms of meta-analysis software... METAL, GWAMA, MR-MEGA.... Although, I suppose I would want these anyway, to be able to compare multi-ancestry methods against a baseline of the typical single-ancestrymethod-on-meta-analyzed-sumstats approach.
+• Non-human species support!
+    Thankfully, GDS format already supports other ploidities.
+  • Separate (human-specific) rsID annotation from LD pipeline and into refpanelutil or s/t
+    • variantkey. Is the speed and robustness worth the extra layer of abstraction/obfuscation?
+        Note it's only designed for human. Could fork it to work w/ o/ species, or only use it in species w/ fewer chrs & smaller genomes than human in the meantime.
+        I kinda want to use it simply because it's so underappreciated.
+• HAPGEN2: no ARM version and it's closed source :( so I guess, make a container of it? It's the main sim software for indiv-lvl GTs AFAIK.
+    Will probably need the same for FINEMAP
+
